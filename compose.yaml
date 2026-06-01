@@ -1,0 +1,16 @@
+services:
+  keepalived:
+    image: ghcr.io/cplieger/docker-keepalived:latest
+    container_name: keepalived
+    restart: unless-stopped
+
+    # VRRP needs host networking plus raw-socket + admin capabilities.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Mount your keepalived.conf (health-check/notify scripts are baked into
+    # the image at /usr/local/bin: check_*.sh, notify.sh).
+    volumes:
+      - ./keepalived:/etc/keepalived:ro
