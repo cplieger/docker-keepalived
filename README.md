@@ -28,6 +28,8 @@ This image is a minimal Alpine wrapper around the upstream `keepalived` package.
 
 ## Quick start
 
+Available from both `ghcr.io/cplieger/docker-keepalived` and `docker.io/cplieger/docker-keepalived` — identical images and tags.
+
 ```yaml
 services:
   keepalived:
