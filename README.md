@@ -179,7 +179,7 @@ If you advertise IPv6 prefixes on the LAN with radvd, keepalived can manage the 
 
 ## Dependencies
 
-Dependencies are updated automatically via [Renovate](https://github.com/renovatebot/renovate) and pinned in the `Dockerfile` (base image by digest, `keepalived` by Alpine package version) for reproducibility:
+Dependencies are updated automatically via [Renovate](https://github.com/renovatebot/renovate). The base image is pinned by SHA digest; the `keepalived` apk package is installed unpinned so it tracks the digest-pinned base (pinning the apk revision strands the build when Alpine bumps releases and drops the old revision):
 
 - **Alpine Linux** — base image ([Docker Hub](https://hub.docker.com/_/alpine))
 - **keepalived** — Alpine community package ([upstream](https://www.keepalived.org/))
