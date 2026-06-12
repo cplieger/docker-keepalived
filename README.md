@@ -18,7 +18,7 @@ This image is a minimal Alpine wrapper around the upstream `keepalived` package.
 - **Multi-arch** — `linux/amd64` and `linux/arm64`
 - **Tiny** — Alpine + the `keepalived` binary, nothing else
 - **No bundled scripts** — bring your own track / notify helpers via the bind mount
-- **Healthcheck** — `pidof keepalived` (CMD form, works without a shell)
+- **Healthcheck** — built-in `pidof keepalived` process check
 
 ### Why this design
 
@@ -163,7 +163,7 @@ keepalived re-reads `keepalived.conf` and applies any changes — track scripts 
 |------|--------|
 | [hadolint](https://github.com/hadolint/hadolint) | Clean |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | No secrets detected |
-| [trivy](https://trivy.dev/) | Inherits Alpine 3.23 base image scan |
+| [trivy](https://trivy.dev/) | Inherits the Alpine base image scan |
 
 The image is published with [cosign](https://github.com/sigstore/cosign) signatures and SBOM attestations. Verify a pull:
 
@@ -179,12 +179,10 @@ If you advertise IPv6 prefixes on the LAN with radvd, keepalived can manage the 
 
 ## Dependencies
 
-All dependencies are updated automatically via [Renovate](https://github.com/renovatebot/renovate) and pinned by digest or version for reproducibility.
+Dependencies are updated automatically via [Renovate](https://github.com/renovatebot/renovate) and pinned in the `Dockerfile` (base image by digest, `keepalived` by Alpine package version) for reproducibility:
 
-| Dependency | Version | Source |
-|------------|---------|--------|
-| alpine | `3.23.4` | [Docker Hub](https://hub.docker.com/_/alpine) |
-| keepalived | `2.3.4-r3` (Alpine 3.23 package) | [Alpine](https://pkgs.alpinelinux.org/package/v3.23/main/x86_64/keepalived) |
+- **Alpine Linux** — base image ([Docker Hub](https://hub.docker.com/_/alpine))
+- **keepalived** — Alpine community package ([upstream](https://www.keepalived.org/))
 
 ## Credits
 
