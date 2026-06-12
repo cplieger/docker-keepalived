@@ -1,10 +1,12 @@
 # docker-keepalived
 
-![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)
+[![CI](https://github.com/cplieger/docker-keepalived/actions/workflows/ci.yaml/badge.svg)](https://github.com/cplieger/docker-keepalived/actions/workflows/ci.yaml)
 [![GitHub release](https://img.shields.io/github/v/release/cplieger/docker-keepalived)](https://github.com/cplieger/docker-keepalived/releases)
 [![Image Size](https://ghcr-badge.egpl.dev/cplieger/docker-keepalived/size)](https://github.com/cplieger/docker-keepalived/pkgs/container/docker-keepalived)
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)
-![base: Alpine 3.23.4](https://img.shields.io/badge/base-Alpine_3.23.4-0D597F?logo=alpinelinux)
+![base: Alpine](https://img.shields.io/badge/base-Alpine-0D597F?logo=alpinelinux)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/docker-keepalived/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/docker-keepalived)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 
 Run [keepalived](https://www.keepalived.org/) (VRRP failover / high availability) in a container. Bring your own `keepalived.conf`.
 
