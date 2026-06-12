@@ -1,0 +1,8 @@
+# Suppress AVD-DS-0002 (Image user should not be 'root') — keepalived must run
+# as root to manage the virtual IP and VRRP. It adds/removes the VIP on the host
+# interface (NET_ADMIN) and constructs raw VRRP/ICMP packets (NET_RAW), running
+# as PID 1 via `keepalived --dont-fork` with no privilege-dropping wrapper. The
+# capabilities are granted narrowly via compose `cap_add` (NET_ADMIN, NET_RAW)
+# rather than `privileged`, but the process itself still runs as uid 0. A
+# `USER non-root` directive would prevent keepalived from managing the VIP.
+AVD-DS-0002
