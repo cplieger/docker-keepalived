@@ -4,7 +4,10 @@ FROM alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acae
 
 # No apk version pin: the digest-pinned base fixes the Alpine release line, so a
 # package-revision pin only strands the build on an Alpine release bump.
-RUN apk add --no-cache --upgrade \
+# apk upgrade first: the pinned base ships some packages (e.g. libssl3) stale;
+# upgrading floats them forward on each rebuild.
+RUN apk upgrade --no-cache \
+    && apk add --no-cache \
         keepalived
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
