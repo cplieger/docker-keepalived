@@ -1,6 +1,6 @@
 # check=error=true
 
-FROM alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4
+FROM alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4 AS base
 
 # No apk version pin: the digest-pinned base fixes the Alpine release line, so a
 # package-revision pin only strands the build on an Alpine release bump.
@@ -9,6 +9,23 @@ FROM alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acae
 RUN apk upgrade --no-cache \
     && apk add --no-cache \
         keepalived
+
+# ---------------------------------------------------------------------------
+# Test stage — runs the build-time smoke test (binary runs + config parses).
+# A failure here fails the centralized `ci / validate` docker build gate,
+# because the final stage below depends on this stage's marker.
+# ---------------------------------------------------------------------------
+FROM base AS test
+COPY tests/ /tmp/tests/
+RUN sh /tmp/tests/smoke.sh && touch /tests-passed
+
+# ---------------------------------------------------------------------------
+# Final stage — the runtime image. Must remain last so the CI build gate
+# (which builds the default target) produces it; the marker COPY forces the
+# test stage to build and pass first.
+# ---------------------------------------------------------------------------
+FROM base AS final
+COPY --from=test /tests-passed /tests-passed
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
     CMD pidof keepalived >/dev/null || exit 1
