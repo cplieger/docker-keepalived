@@ -21,8 +21,25 @@ if ! keepalived --version >/dev/null 2>&1; then
 fi
 
 # 2. keepalived's own config-test mode (-t) accepts a valid VRRP config.
-if ! keepalived -t -f "$d/keepalived.conf" --log-console >/dev/null 2>&1; then
+#    The config enables enable_script_security, which makes keepalived
+#    security-check the config FILE itself: if it is group/world-writable or
+#    executable, keepalived silently skips it ("not a regular non-executable
+#    file - skipping") and -t exits 0 without parsing anything — a vacuous
+#    pass. Build contexts on some filesystems (e.g. Windows/WSL bind mounts)
+#    expose 0777, so copy to a root-owned 0644 temp file first to guarantee
+#    the config is actually parsed. Also fail if keepalived reports skipping.
+conf=$(mktemp)
+trap 'rm -f "$conf"' EXIT
+cp "$d/keepalived.conf" "$conf"
+chmod 0644 "$conf"
+out=$(keepalived -t -f "$conf" --log-console --log-detail 2>&1) || {
 	log "FAIL: 'keepalived -t' rejected a valid VRRP config"
+	log "$out"
+	fail=1
+}
+if printf '%s' "$out" | grep -q 'skipping'; then
+	log "FAIL: 'keepalived -t' skipped the config file instead of parsing it"
+	log "$out"
 	fail=1
 fi
 
