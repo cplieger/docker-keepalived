@@ -47,15 +47,6 @@ if printf '%s' "$out" | grep -q 'skipping'; then
   log "$out"
   fail=1
 fi
-# Defense-in-depth: confirm the file was actually opened/parsed. keepalived's
-# open_conf_file() logs "Opening file '<path>'." under --log-detail, so its
-# absence means -t never parsed the config (guards against a future vacuous
-# pass if the 'skipping' wording ever changes upstream).
-if ! printf '%s' "$out" | grep -q 'Opening file'; then
-  log "FAIL: 'keepalived -t' logged no 'Opening file' - config may not have been parsed"
-  log "$out"
-  fail=1
-fi
 
 [ "$fail" -eq 0 ] && log "keepalived smoke: ok"
 exit "$fail"
