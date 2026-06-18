@@ -103,12 +103,16 @@ Inside the container, `/etc/keepalived` mirrors the host bind-mount source's own
 - The host directory you mount at `/etc/keepalived` is owned by `root:root`
 - The directory is **not group-writable or world-writable** (mode 755 is fine; 770 is not because group-writable counts as "writable by non-root")
 - Same for any `scripts/` subdirectory — must be `root:root` and not group-writable
+- Each track / notify script **file** must also be root-owned and not group/world-writable (755 ok; 664/775/770 are rejected) — keepalived applies the same check to the script file, not just its parent directories
 
 A common gotcha: many homelab path conventions (`/srv/containers/<app>/`, `/mnt/applications/containers/<app>/`) inherit non-root ownership from a parent dir. Fix on each server with:
 
 ```bash
 chown -R root:root /path/to/keepalived
 chmod 755 /path/to/keepalived /path/to/keepalived/scripts
+# script files must also be non-group/world-writable (keepalived checks the file too)
+chmod 644 /path/to/keepalived/keepalived.conf
+find /path/to/keepalived/scripts -type f -exec chmod 755 {} +
 ```
 
 If you don't use `enable_script_security`, none of this applies — but you should use it.
@@ -117,21 +121,21 @@ If you don't use `enable_script_security`, none of this applies — but you shou
 
 ### Volumes
 
-| Mount | Description |
-|-------|-------------|
+| Mount             | Description                                                                                                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/etc/keepalived` | Your `keepalived.conf` and any track / notify scripts it references. Mount read-only. **Must be root-owned and not group/world-writable** if `enable_script_security` is set. |
 
 ### Capabilities
 
-| Capability | Why needed |
-|------------|-----------|
+| Capability  | Why needed                                                    |
+| ----------- | ------------------------------------------------------------- |
 | `NET_ADMIN` | Adding / removing the virtual IP, socket option configuration |
-| `NET_RAW` | Constructing VRRP packets (raw sockets) and ICMP probes |
+| `NET_RAW`   | Constructing VRRP packets (raw sockets) and ICMP probes       |
 
 ### Networking
 
-| Setting | Value | Reason |
-|---------|-------|--------|
+| Setting        | Value  | Reason                                                                                        |
+| -------------- | ------ | --------------------------------------------------------------------------------------------- |
 | `network_mode` | `host` | VRRP advertisements use multicast on the LAN segment; container networking would isolate them |
 
 VRRP multicast addresses (RFC 5798): `224.0.0.18` (IPv4), `ff02::12` (IPv6). `NET_BROADCAST` is **not** required.
@@ -147,6 +151,8 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
 
 This catches the "process crashed" failure mode but not "VRRP is stuck": for that, watch the `notify` script logs and the VRRP_Script success/failure log lines, or scrape keepalived's stats interface (`SIGUSR2` triggers a stats dump to `/tmp/keepalived.stats`).
 
+The image runs `keepalived --dont-fork --log-console --log-detail`, so all VRRP state transitions, track-script success/failure lines, and the `Unsafe permissions found ... - disabling` warning are written to the container's stdout/stderr and appear in `docker logs keepalived` (and any log shipper scraping it). This is where you watch for a stuck VRRP or a silently-disabled track script that the `pidof` healthcheck cannot see.
+
 ## Reload without restart
 
 To apply a config change without a container restart (no VIP transition):
@@ -159,11 +165,11 @@ keepalived re-reads `keepalived.conf` and applies any changes — track scripts 
 
 ## Security
 
-| Tool | Result |
-|------|--------|
-| [hadolint](https://github.com/hadolint/hadolint) | Clean |
-| [gitleaks](https://github.com/gitleaks/gitleaks) | No secrets detected |
-| [trivy](https://trivy.dev/) | Inherits the Alpine base image scan |
+| Tool                                             | Result                              |
+| ------------------------------------------------ | ----------------------------------- |
+| [hadolint](https://github.com/hadolint/hadolint) | Clean                               |
+| [gitleaks](https://github.com/gitleaks/gitleaks) | No secrets detected                 |
+| [trivy](https://trivy.dev/)                      | Inherits the Alpine base image scan |
 
 The image is published with [cosign](https://github.com/sigstore/cosign) signatures and SBOM attestations. Verify a pull:
 
