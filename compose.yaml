@@ -1,3 +1,4 @@
+---
 services:
   keepalived:
     image: ghcr.io/cplieger/docker-keepalived:latest
