@@ -1,28 +1,18 @@
----
+# Example compose for docker-keepalived. See the README for all configuration options and hardening.
 services:
   keepalived:
     image: ghcr.io/cplieger/docker-keepalived:latest
     container_name: keepalived
     restart: unless-stopped
 
-    # VRRP needs host networking plus raw-socket + admin capabilities.
+    # VRRP multicast on a real LAN interface needs host networking + raw-socket/admin caps.
     network_mode: host
     cap_add:
       - NET_ADMIN
       - NET_RAW
 
-    # Mount your keepalived.conf — and any track-script / notify helpers
-    # it references — into /etc/keepalived. A scripts/ subdir is the most
-    # natural layout; keepalived.conf would then point at e.g.
-    #   script "/etc/keepalived/scripts/check_app.sh"
-    #   notify "/etc/keepalived/scripts/notify.sh"
-    #
-    # SECURITY NOTE — enable_script_security:
-    # If your keepalived.conf sets `enable_script_security` in global_defs
-    # (recommended), keepalived refuses to execute scripts whose path has
-    # any non-root-writable component. Make sure the host-side mount source
-    # (and its scripts subdir, if any) are owned by root:root and not
-    # group/world-writable, otherwise track scripts will be silently
-    # disabled with "Unsafe permissions found … - disabling" in the log.
+    # Mount your keepalived.conf (+ any track/notify scripts) here. If the conf sets
+    # enable_script_security, the mount must be root-owned and not group-writable or the
+    # scripts are silently disabled. See README "enable_script_security".
     volumes:
-      - ./keepalived:/etc/keepalived:ro
+      - "./keepalived:/etc/keepalived:ro"
