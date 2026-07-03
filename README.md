@@ -11,7 +11,7 @@ Run [keepalived](https://www.keepalived.org/) (VRRP failover / high availability
 
 ## What it does
 
-[keepalived](https://www.keepalived.org/) implements VRRP — the protocol that lets two or more machines share a virtual IP address with automatic failover. One node owns the VIP and serves traffic; if it dies, another node takes over within a few seconds. This is how active/passive high-availability typically works at the IP layer.
+[keepalived](https://www.keepalived.org/) implements VRRP, so two or more machines share a virtual IP with automatic failover: one node owns the VIP, and another takes over within seconds if it dies.
 
 This image is a minimal Alpine wrapper around the upstream `keepalived` package. There's no entrypoint magic, no env-var-to-config translation, no bundled scripts: you mount your own `keepalived.conf` and any track / notify scripts it references, and keepalived runs as PID 1.
 
@@ -103,9 +103,9 @@ Inside the container, `/etc/keepalived` mirrors the host bind-mount source's own
 - The host directory you mount at `/etc/keepalived` is owned by `root:root`
 - The directory is **not group-writable or world-writable** (mode 755 is fine; 770 is not because group-writable counts as "writable by non-root")
 - Same for any `scripts/` subdirectory — must be `root:root` and not group-writable
-- Each track / notify script **file** must also be root-owned and not group/world-writable (755 ok; 664/775/770 are rejected) — keepalived applies the same check to the script file, not just its parent directories
+- Each track / notify script **file** must also be root-owned and not group/world-writable — keepalived applies the same check to the script file, not just its parent directories
 
-A common gotcha: many homelab path conventions (`/srv/containers/<app>/`, `/mnt/applications/containers/<app>/`) inherit non-root ownership from a parent dir. Fix on each server with:
+A common gotcha: many host bind-mount layouts inherit non-root ownership from a parent dir. Fix on each server with:
 
 ```bash
 chown -R root:root /path/to/keepalived
@@ -200,7 +200,7 @@ Issues and pull requests are welcome. Please open an issue first for larger chan
 
 ## Disclaimer
 
-This image is built with care and follows security best practices, but it is intended for **homelab use**. No guarantees of fitness for production environments. Use at your own risk.
+This project is built with care and follows security best practices, but it is intended for personal / self-hosted use. No guarantees of fitness for production environments. Use at your own risk.
 
 This project was built with AI-assisted tooling using [Claude Opus](https://www.anthropic.com/claude) and [Kiro](https://kiro.dev). The human maintainer defines architecture, supervises implementation, and makes all final decisions.
 
