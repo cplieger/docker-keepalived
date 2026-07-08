@@ -27,6 +27,10 @@ RUN sh /tmp/tests/smoke.sh && touch /tests-passed
 FROM base AS final
 COPY --from=test /tests-passed /tests-passed
 
+# Liveness only: proves the process exists, NOT that VRRP is
+# advertising. A stuck/wedged daemon still reports healthy. Watch
+# docker logs (VRRP state transitions, VRRP_Script lines) or the
+# SIGUSR2 stats dump for stuck-VRRP detection. See README "Healthcheck".
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
     CMD pidof keepalived >/dev/null || exit 1
 ENTRYPOINT ["keepalived", "--dont-fork", "--log-console", "--log-detail"]

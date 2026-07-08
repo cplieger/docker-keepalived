@@ -35,7 +35,8 @@ fi
 #    check is a separate path that applies to track/notify SCRIPTS, not the
 #    config file.)
 conf=$(mktemp)
-trap 'rm -f "$conf"' EXIT
+bad=$(mktemp)
+trap 'rm -f "$conf" "$bad"' EXIT
 cp "$d/keepalived.conf" "$conf"
 chmod 0644 "$conf"
 out=$(keepalived -t -f "$conf" --log-console --log-detail 2>&1) || {
@@ -46,6 +47,18 @@ out=$(keepalived -t -f "$conf" --log-console --log-detail 2>&1) || {
 if printf '%s' "$out" | grep -q 'skipping'; then
   err "FAIL: 'keepalived -t' skipped the config file instead of parsing it"
   err "$out"
+  fail=1
+fi
+
+# 2a. Negative control: the same config minus `script_user root` must be
+#     REJECTED (enable_script_security then finds no keepalived_script user,
+#     rc 5). Proves -t can actually reject a bad config, independent of any
+#     log-message wording — the backstop if upstream ever reworks the
+#     'skipping' notice the grep above relies on.
+grep -v 'script_user root' "$d/keepalived.conf" >"$bad"
+chmod 0644 "$bad"
+if keepalived -t -f "$bad" --log-console --log-detail >/dev/null 2>&1; then
+  err "FAIL: 'keepalived -t' accepted a config it should reject (vacuous gate?)"
   fail=1
 fi
 

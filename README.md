@@ -190,6 +190,8 @@ Dependencies are updated automatically via [Renovate](https://github.com/renovat
 - **Alpine Linux** — base image ([Docker Hub](https://hub.docker.com/_/alpine))
 - **keepalived** — Alpine community package ([upstream](https://www.keepalived.org/))
 
+Because the `keepalived` apk package is unpinned, its CVE currency in the published image is bounded by rebuild cadence rather than by keepalived releases: Renovate can bump the SHA-pinned Alpine base digest, but it cannot see an unpinned apk revision, and there is no independent keepalived-version trigger. A keepalived fix that lands in the Alpine repo without a coincident base-digest change only reaches `:latest` on the next rebuild. Operators who need faster patch response should rebuild / pull on a cadence or run their own [trivy](https://trivy.dev/) scan of the `:latest` image.
+
 ## Credits
 
 This project packages [keepalived](https://github.com/acassen/keepalived) into a container image. All credit for the core functionality goes to the upstream maintainers — Alexandre Cassen and the keepalived community.
