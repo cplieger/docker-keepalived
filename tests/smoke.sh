@@ -13,11 +13,12 @@ set -eu
 d=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 fail=0
 log() { printf '%s\n' "$*"; }
+err() { printf '%s\n' "$*" >&2; }
 
 # 1. The binary runs and links (catches a broken apk install / missing libs).
 if ! ver=$(keepalived --version 2>&1); then
-  log "FAIL: 'keepalived --version' did not run"
-  log "$ver"
+  err "FAIL: 'keepalived --version' did not run"
+  err "$ver"
   fail=1
 fi
 
@@ -38,13 +39,13 @@ trap 'rm -f "$conf"' EXIT
 cp "$d/keepalived.conf" "$conf"
 chmod 0644 "$conf"
 out=$(keepalived -t -f "$conf" --log-console --log-detail 2>&1) || {
-  log "FAIL: 'keepalived -t' rejected a valid VRRP config"
-  log "$out"
+  err "FAIL: 'keepalived -t' rejected a valid VRRP config"
+  err "$out"
   fail=1
 }
 if printf '%s' "$out" | grep -q 'skipping'; then
-  log "FAIL: 'keepalived -t' skipped the config file instead of parsing it"
-  log "$out"
+  err "FAIL: 'keepalived -t' skipped the config file instead of parsing it"
+  err "$out"
   fail=1
 fi
 

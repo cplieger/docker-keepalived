@@ -12,7 +12,7 @@ services:
       - NET_RAW
 
     # Mount your keepalived.conf (+ any track/notify scripts) here. If the conf sets
-    # enable_script_security, the mount must be root-owned and not group-writable or the
+    # enable_script_security, the mount must be root-owned and not group- or world-writable, else the
     # scripts are silently disabled. See README "enable_script_security".
     volumes:
       - "./keepalived:/etc/keepalived:ro"
