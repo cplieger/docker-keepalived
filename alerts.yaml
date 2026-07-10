@@ -1,0 +1,43 @@
+# Recommended alert rules for docker-keepalived. Loki ruler (LogQL) rule group:
+# ship the container's logs to Loki and evaluate with Loki's ruler; firing
+# alerts deliver through your Alertmanager like any Prometheus alert. Thresholds
+# and the severity labels are starting points; adjust the container and label
+# selectors to your deployment.
+groups:
+  - name: keepalived
+    rules:
+      - alert: KeepalivedTrackScriptFailed
+        expr: |
+          sum by (hostname) (count_over_time({container="keepalived"} |= "VRRP_Script(" |= "failed" [1m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Keepalived track script failing"
+          description: >
+            A keepalived VRRP track script reported failed. The monitored
+            service is down and a VRRP failover is imminent or in progress.
+      - alert: KeepalivedFaultState
+        expr: |
+          sum by (hostname) (count_over_time({container="keepalived"} |~ "(?i)FAULT state" [1m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Keepalived instance entered FAULT state"
+          description: >
+            A VRRP instance entered FAULT state. A track script failed, so this
+            node dropped out of the VRRP election and the VIP fails over to a
+            backup node.
+      - alert: KeepalivedConfigError
+        expr: |
+          sum by (hostname) (count_over_time({container="keepalived"} |= "Unknown keyword" [15m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Keepalived config parse error"
+          description: >
+            keepalived logged an unknown-keyword or parse error after a
+            (re)deploy, so a directive is being silently ignored. Review your
+            keepalived.conf.
