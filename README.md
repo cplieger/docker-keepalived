@@ -153,6 +153,18 @@ This catches the "process crashed" failure mode but not "VRRP is stuck": for tha
 
 The image runs `keepalived --dont-fork --log-console --log-detail`, so all VRRP state transitions, track-script success/failure lines, and the `Unsafe permissions found ... - disabling` warning are written to the container's stdout/stderr and appear in `docker logs keepalived` (and any log shipper scraping it). This is where you watch for a stuck VRRP or a silently-disabled track script that the `pidof` healthcheck cannot see.
 
+## Alerting
+
+keepalived logs VRRP state transitions and config events to its container log (the same stream the [Healthcheck](#healthcheck) section describes shipping to a log collector). Ship it to Loki and evaluate the rules in [`alerts.yaml`](alerts.yaml) with Loki's ruler; firing alerts deliver through your Alertmanager like any Prometheus alert. They cover:
+
+| Alert | Fires when | Severity |
+| --- | --- | --- |
+| `KeepalivedTrackScriptFailed` | a VRRP track script reports failed (failover imminent) | critical |
+| `KeepalivedFaultState` | a VRRP instance enters FAULT state and drops out of the election | critical |
+| `KeepalivedConfigError` | keepalived logs an unknown-keyword or parse error after a (re)deploy | warning |
+
+Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses.
+
 ## Reload without restart
 
 To apply a config change without a container restart (no VIP transition):
