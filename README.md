@@ -13,7 +13,7 @@ Run [keepalived](https://www.keepalived.org/) (VRRP failover / high availability
 
 [keepalived](https://www.keepalived.org/) implements VRRP, so two or more machines share a virtual IP with automatic failover: one node owns the VIP, and another takes over within seconds if it dies.
 
-This image is a minimal Alpine wrapper around the upstream `keepalived` package. There's no entrypoint magic, no env-var-to-config translation, no bundled scripts: you mount your own `keepalived.conf` and any track / notify scripts it references, and keepalived runs as PID 1.
+This image is a minimal Alpine wrapper around upstream `keepalived`, compiled from a pinned upstream source release. There's no entrypoint magic, no env-var-to-config translation, no bundled scripts: you mount your own `keepalived.conf` and any track / notify scripts it references, and keepalived runs as PID 1.
 
 - **Multi-arch** — `linux/amd64` and `linux/arm64`
 - **Tiny** — Alpine + the `keepalived` binary, nothing else
@@ -197,12 +197,16 @@ If you advertise IPv6 prefixes on the LAN with radvd, keepalived can manage the 
 
 ## Dependencies
 
-Dependencies are updated automatically via [Renovate](https://github.com/renovatebot/renovate). The base image is pinned by SHA digest; the `keepalived` apk package is installed unpinned so it tracks the digest-pinned base (pinning the apk revision strands the build when Alpine bumps releases and drops the old revision):
+Dependencies are updated automatically via [Renovate](https://github.com/renovatebot/renovate). The base image is pinned by SHA digest; keepalived itself is built from a pinned upstream source release whose tarball is SHA256-verified at build time, so a hash mismatch fails the build:
 
 - **Alpine Linux** — base image ([Docker Hub](https://hub.docker.com/_/alpine))
-- **keepalived** — Alpine community package ([upstream](https://www.keepalived.org/))
+- **keepalived** — built from the pinned upstream source tarball ([upstream](https://www.keepalived.org/)), version-tracked via GitHub tags, with feature parity to Alpine's packaged build (nftables, libnl3, OpenSSL, JSON; no SNMP, no systemd)
 
-Because the `keepalived` apk package is unpinned, its CVE currency in the published image is bounded by rebuild cadence rather than by keepalived releases: Renovate can bump the SHA-pinned Alpine base digest, but it cannot see an unpinned apk revision, and there is no independent keepalived-version trigger. A keepalived fix that lands in the Alpine repo without a coincident base-digest change only reaches `:latest` on the next rebuild. Operators who need faster patch response should rebuild / pull on a cadence or run their own [trivy](https://trivy.dev/) scan of the `:latest` image.
+keepalived CVE currency is now event-driven: a new upstream release opens a Renovate PR that bumps the pinned version (the tarball SHA256 is recomputed in the same PR), and merging it rebuilds and republishes the image. The unpinned remainder is the Alpine runtime libraries keepalived links against (libnl3, libnftnl, libmnl, OpenSSL): those float forward at image build time (`apk upgrade`), so their CVE currency is still bounded by rebuild cadence. That cadence is bounded too: published images are rebuilt automatically once the last successful build exceeds a staleness interval, on top of the usual Renovate-triggered rebuilds. Operators who need faster patch response can still rebuild / pull on their own cadence or run a [trivy](https://trivy.dev/) scan of the `:latest` image.
+
+### Migration note: source build (major version)
+
+Earlier image versions installed keepalived from the Alpine community repository (keepalived 2.3.4 on Alpine 3.24). The image now compiles the daemon from the pinned upstream release, which moves it to the current upstream line (2.4.x at the time of this change). The container interface is unchanged: same `/etc/keepalived` read-only bind mount, same capabilities (`NET_ADMIN`, `NET_RAW`), same signals (`HUP` config reload, `USR2` stats dump), same `pidof` healthcheck, and the same `keepalived --dont-fork --log-console --log-detail` PID 1 entrypoint. Review the [upstream changelog](https://github.com/acassen/keepalived/blob/master/ChangeLog) for keepalived 2.4.x behavior changes before rolling it out across an HA pair.
 
 ## Credits
 

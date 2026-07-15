@@ -3,11 +3,13 @@
 #
 # Runs in the Dockerfile `test` stage, so the centralized `ci / validate`
 # docker build-ability gate executes it on every PR and push (the final image
-# stage depends on this stage's marker). Catches a broken keepalived package
-# (missing shared libs, unparseable build) and a config the binary rejects —
-# the real failure modes for a thin upstream-wrapper image.
+# stage depends on this stage's marker). Catches a broken keepalived build
+# (missing shared libs, wrong version shipped, a dropped parity feature) and
+# a config the binary rejects: the real failure modes for an image that
+# compiles its payload from upstream source.
 #
-# Run locally:  sh tests/smoke.sh   (needs the keepalived binary on PATH)
+# Run locally:  sh tests/smoke.sh   (needs the keepalived binary on PATH;
+# set KEEPALIVED_EXPECTED_VERSION=<X.Y.Z> to also run the exact-version check)
 set -eu
 
 d=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -15,12 +17,39 @@ fail=0
 log() { printf '%s\n' "$*"; }
 err() { printf '%s\n' "$*" >&2; }
 
-# 1. The binary runs and links (catches a broken apk install / missing libs).
+# 1. The binary runs and links (catches a broken build / missing libs).
 if ! ver=$(keepalived --version 2>&1); then
   err "FAIL: 'keepalived --version' did not run"
   err "$ver"
   fail=1
 fi
+
+# 1a. Exact-version assertion: the binary must report the pinned upstream
+#     version (KEEPALIVED_EXPECTED_VERSION, passed by the Dockerfile test
+#     stage from ARG KEEPALIVED_VERSION; a leading "v" is stripped here).
+#     Catches a fetch/extract mixup shipping the wrong release. Unset means
+#     a bare local run: the check is skipped with a notice. The Dockerfile
+#     guards the ARG with :? so the in-image gate can never silently skip.
+if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
+  expected=${KEEPALIVED_EXPECTED_VERSION#v}
+  if ! printf '%s\n' "$ver" | head -n 1 | grep -qF "Keepalived v${expected} ("; then
+    err "FAIL: version mismatch: expected v${expected}, got: $(printf '%s\n' "$ver" | head -n 1)"
+    fail=1
+  fi
+else
+  log "note: KEEPALIVED_EXPECTED_VERSION unset - skipping exact-version check (local run)"
+fi
+
+# 1b. Feature-parity assertion: the build must include nftables and JSON
+#     support (parity with Alpine's community keepalived package). keepalived
+#     lists its compiled-in features on --version's "Config options" line;
+#     a configure that silently dropped a feature fails here.
+for feat in NFTABLES JSON; do
+  if ! printf '%s\n' "$ver" | grep -qw "$feat"; then
+    err "FAIL: keepalived built without $feat support (parity floor)"
+    fail=1
+  fi
+done
 
 # 2. keepalived's own config-test mode (-t) accepts a valid VRRP config.
 #    The config enables enable_script_security, which makes keepalived
