@@ -7,7 +7,7 @@
 # fail-closes the build until it is updated):
 # curl -sL https://www.keepalived.org/software/keepalived-<X.Y.Z>.tar.gz | sha256sum
 # renovate: datasource=github-tags depName=acassen/keepalived
-ARG KEEPALIVED_VERSION=v2.4.2
+ARG KEEPALIVED_VERSION=v2.4.3
 ARG KEEPALIVED_SHA256=cb5b14543371e8949a848e5a476567d21c961b2f9f7b82909786bd4cd3c96ae7
 
 # ---------------------------------------------------------------------------
