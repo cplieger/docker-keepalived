@@ -8,7 +8,7 @@
 # curl -sL https://www.keepalived.org/software/keepalived-<X.Y.Z>.tar.gz | sha256sum
 # renovate: datasource=github-tags depName=acassen/keepalived
 ARG KEEPALIVED_VERSION=v2.4.3
-ARG KEEPALIVED_SHA256=cb5b14543371e8949a848e5a476567d21c961b2f9f7b82909786bd4cd3c96ae7
+ARG KEEPALIVED_SHA256=a0faef8e401c143487b131b526df7541c1e33d9b8814642fa9dfe8bb250a9632
 
 # ---------------------------------------------------------------------------
 # Builder stage — compiles keepalived from the pinned, SHA256-verified
