@@ -38,6 +38,7 @@ groups:
         annotations:
           summary: "Keepalived config parse error"
           description: >
-            keepalived logged an unknown-keyword or parse error after a
-            (re)deploy, so a directive is being silently ignored. Review your
-            keepalived.conf.
+            keepalived logged an unknown-keyword config error after a
+            (re)deploy, so a directive is being silently ignored. Other parse
+            error classes log different lines and are not matched; review
+            your keepalived.conf.
