@@ -103,6 +103,7 @@ COPY tests/ /tmp/tests/
 # ${KEEPALIVED_VERSION:?} fails the build if the ARG wiring ever breaks, so
 # the smoke test's exact-version assertion can never be skipped in-image.
 RUN KEEPALIVED_EXPECTED_VERSION="${KEEPALIVED_VERSION:?}" sh /tmp/tests/smoke.sh \
+    && [ -x /usr/bin/genhash ] \
     && touch /tests-passed
 
 # ---------------------------------------------------------------------------

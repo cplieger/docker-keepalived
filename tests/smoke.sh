@@ -86,8 +86,9 @@ fi
 #     'skipping' notice the grep above relies on.
 grep -v 'script_user root' "$d/keepalived.conf" >"$bad"
 chmod 0644 "$bad"
-if keepalived -t -f "$bad" --log-console --log-detail >/dev/null 2>&1; then
+if bad_out=$(keepalived -t -f "$bad" --log-console --log-detail 2>&1); then
   err "FAIL: 'keepalived -t' accepted a config it should reject (vacuous gate?)"
+  err "$bad_out"
   fail=1
 fi
 
