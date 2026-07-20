@@ -31,14 +31,19 @@ groups:
             backup node.
       - alert: KeepalivedConfigError
         expr: |
-          sum by (hostname) (count_over_time({container="keepalived"} |= "Unknown keyword" [15m])) > 0
+          sum by (hostname) (count_over_time(
+            {container="keepalived"}
+            |~ "Unknown keyword|\\(([^)]*: )?Line [0-9]+\\)|(Unable to (read|find)|Failed to open) configuration file|Configuration file '" [15m]
+          )) > 0
         for: 0m
         labels:
           severity: warning
         annotations:
-          summary: "Keepalived config parse error"
+          summary: "Keepalived config error"
           description: >
-            keepalived logged an unknown-keyword config error after a
-            (re)deploy, so a directive is being silently ignored. Other parse
-            error classes log different lines and are not matched; review
-            your keepalived.conf.
+            keepalived logged a config error after a (re)deploy: an unknown
+            keyword (directive silently ignored), a "(Line N)"-prefixed
+            parse error such as an invalid directive value, or a config
+            file it could not open or read. Review your keepalived.conf.
+            Config problems logged without these line shapes (such as
+            post-parse validation errors) are not matched.

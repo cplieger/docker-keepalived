@@ -161,7 +161,7 @@ keepalived logs VRRP state transitions and config events to its container log (t
 | --- | --- | --- |
 | `KeepalivedTrackScriptFailed` | a VRRP track script reports failed (failover imminent) | critical |
 | `KeepalivedFaultState` | a VRRP instance enters FAULT state and drops out of the election | critical |
-| `KeepalivedConfigError` | keepalived logs an unknown-keyword config error after a (re)deploy | warning |
+| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy — an unknown keyword, a `(Line N)`-prefixed parse error (e.g. invalid directive value), or a config file open/read failure | warning |
 
 Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses.
 
