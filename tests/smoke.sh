@@ -4,9 +4,10 @@
 # Runs in the Dockerfile `test` stage, so the centralized `ci / validate`
 # docker build-ability gate executes it on every PR and push (the final image
 # stage depends on this stage's marker). Catches a broken keepalived build
-# (missing shared libs, wrong version shipped, a dropped parity feature) and
-# a config the binary rejects: the real failure modes for an image that
-# compiles its payload from upstream source.
+# (missing shared libs, wrong version shipped, a dropped parity feature), a
+# config the binary rejects, and a missing or version-drifted embedded SBOM
+# fragment: the real failure modes for an image that compiles its payload
+# from upstream source.
 #
 # Run locally:  sh tests/smoke.sh   (needs the keepalived binary on PATH;
 # set KEEPALIVED_EXPECTED_VERSION=<X.Y.Z> to also run the exact-version check)
@@ -90,6 +91,49 @@ if bad_out=$(keepalived -t -f "$bad" --log-console --log-detail 2>&1); then
   err "FAIL: 'keepalived -t' accepted a config it should reject (vacuous gate?)"
   err "$bad_out"
   fail=1
+fi
+
+# 3. Embedded SBOM fragment (Dockerfile builder stage): the CycloneDX file
+#    covering the source-built keepalived must ship in the image, name the
+#    component, and carry the ARG-derived version — a hardcoded version
+#    would drift silently on the next Renovate bump, which is exactly the
+#    failure mode the fragment exists to prevent. Gated on
+#    KEEPALIVED_EXPECTED_VERSION like section 1a: in-image the Dockerfile's
+#    :? guard guarantees the variable, so the gate can never silently skip;
+#    a bare local run (no image filesystem) skips with a notice. BusyBox
+#    has no jq, so assert shape with grep: non-empty, starts with { and
+#    ends with }.
+if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
+  sbom=/usr/share/sbom/keepalived.cdx.json
+  expected=${KEEPALIVED_EXPECTED_VERSION#v}
+  if [ ! -s "$sbom" ]; then
+    err "FAIL: embedded SBOM fragment missing or empty: $sbom"
+    fail=1
+  else
+    if [ "$(head -c 1 "$sbom")" != "{" ] || [ "$(tail -c 2 "$sbom")" != "}" ]; then
+      err "FAIL: embedded SBOM fragment is not a JSON object (bad first/last byte)"
+      fail=1
+    fi
+    grep -q '"name": "keepalived"' "$sbom" || {
+      err "FAIL: embedded SBOM fragment missing component: keepalived"
+      fail=1
+    }
+    # Exactly one version-shaped component version ("version": 1 — the BOM
+    # serial, unquoted — and "specVersion" don't match the pattern).
+    # grep -c prints the count (0 included) even when it exits 1 on zero
+    # matches; || true keeps set -e from aborting before the FAIL report.
+    versions=$(grep -c '"version": "[0-9][0-9.]*"' "$sbom" || true)
+    if [ "$versions" -ne 1 ]; then
+      err "FAIL: embedded SBOM fragment has $versions version-shaped component versions (want 1)"
+      fail=1
+    fi
+    grep -qF "\"version\": \"${expected}\"" "$sbom" || {
+      err "FAIL: embedded SBOM fragment version is not v${expected} (ARG wiring broken?)"
+      fail=1
+    }
+  fi
+else
+  log "note: KEEPALIVED_EXPECTED_VERSION unset - skipping SBOM fragment check (local run)"
 fi
 
 [ "$fail" -eq 0 ] && log "keepalived smoke: ok"

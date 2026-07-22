@@ -68,6 +68,39 @@ RUN wget -q --tries=3 --timeout=30 \
     && strip /out/usr/sbin/keepalived
 
 # ---------------------------------------------------------------------------
+# Embedded SBOM fragment. Syft inventories the final image from Alpine's APK
+# database only, so the source-built keepalived binary is invisible to the
+# signed release SBOM and to vulnerability scanners. Generate a CycloneDX
+# fragment from the same Renovate-tracked version ARG the build uses — a
+# Renovate bump keeps the SBOM correct with zero extra maintenance — and
+# ship it in the runtime image where Syft's sbom-cataloger picks it up. The
+# cataloger is enabled centrally by the release pipeline (cplieger/ci); no
+# per-repo .syft.yaml is needed.
+# purl: pkg:generic with the real provenance (the keepalived.org dist
+# tarball fetched above, not a forge archive), download_url + checksum
+# qualifiers mirroring the fetch. CPE vendor:product is
+# keepalived:keepalived per the NVD CPE dictionary, e.g.
+# https://nvd.nist.gov/products/cpe/detail/B6CF2665-405B-4810-BB6D-9088CFD1868C/
+# ---------------------------------------------------------------------------
+RUN cat > /out/keepalived.cdx.json <<EOF
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "components": [
+    {
+      "bom-ref": "pkg:generic/keepalived@${KEEPALIVED_VERSION#v}",
+      "type": "application",
+      "name": "keepalived",
+      "version": "${KEEPALIVED_VERSION#v}",
+      "purl": "pkg:generic/keepalived@${KEEPALIVED_VERSION#v}?download_url=https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.tar.gz&checksum=sha256:${KEEPALIVED_SHA256}",
+      "cpe": "cpe:2.3:a:keepalived:keepalived:${KEEPALIVED_VERSION#v}:*:*:*:*:*:*:*"
+    }
+  ]
+}
+EOF
+
+# ---------------------------------------------------------------------------
 # Runtime stage — same digest-pinned base shape as before the source-build
 # conversion, but apk-installs only the shared libraries the built binary
 # links (the apk package's so: depends), not the keepalived package.
@@ -87,6 +120,11 @@ RUN apk upgrade --no-cache \
         libssl3
 
 COPY --from=builder /out/usr/sbin/keepalived /usr/sbin/keepalived
+# CycloneDX SBOM fragment for the source-built keepalived (generated in the
+# builder stage from the Renovate-tracked version ARG). Placed where the
+# release pipeline's Syft sbom-cataloger inventories it, so SBOMs and
+# scanners see keepalived alongside the APK packages.
+COPY --from=builder /out/keepalived.cdx.json /usr/share/sbom/keepalived.cdx.json
 # genhash (the HTTP_GET checker digest helper) is the same binary in genhash
 # mode; ship the same symlink the Alpine package installs.
 RUN ln -s ../sbin/keepalived /usr/bin/genhash
