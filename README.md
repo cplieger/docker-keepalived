@@ -13,23 +13,17 @@ Run [keepalived](https://www.keepalived.org/) (VRRP failover / high availability
 
 [keepalived](https://www.keepalived.org/) implements VRRP, so two or more machines share a virtual IP with automatic failover: one node owns the VIP, and another takes over within seconds if it dies.
 
-This image is a minimal Alpine wrapper around upstream `keepalived`, compiled from a pinned upstream source release. There's no entrypoint magic, no env-var-to-config translation, no bundled scripts: you mount your own `keepalived.conf` and any track / notify scripts it references, and keepalived runs as PID 1.
-
-- **Multi-arch** — `linux/amd64` and `linux/arm64`
-- **Tiny** — Alpine + the `keepalived` binary, nothing else
-- **No bundled scripts** — bring your own track / notify helpers via the bind mount
-- **Healthcheck** — built-in `pidof keepalived` process check
+This image is a minimal Alpine wrapper around upstream `keepalived`, compiled from a pinned upstream source release. There's no entrypoint magic, no env-var-to-config translation, no bundled scripts: you mount your own `keepalived.conf` and any track / notify scripts it references, and keepalived runs as PID 1. The image also ships keepalived's `genhash` digest helper for `HTTP_GET` checker configuration.
 
 ### Why this design
 
-- **Generic upstream-only** — no custom track scripts baked in. The image is reusable across any VRRP topology without inheriting someone else's check logic
-- **Bind-mount only** — single read-only `:ro` mount of `/etc/keepalived` keeps the container's writable surface zero
-- **Host networking** — VRRP uses multicast (224.0.0.18 for IPv4, ff02::12 for IPv6) and needs the host's network namespace to advertise on a real LAN interface
-- **No PID 1 wrapper** — `keepalived --dont-fork` runs as PID 1 directly, so SIGTERM from `docker stop` reaches it instantly without a wrapper layer
+- **Generic upstream-only**: no custom track scripts baked in, so the image works for any VRRP topology without inheriting someone else's check logic
+- **Bind-mount only**: a single read-only `:ro` mount of `/etc/keepalived` keeps the container's writable surface zero
+- **No PID 1 wrapper**: `keepalived --dont-fork` runs as PID 1 directly, so SIGTERM from `docker stop` reaches it instantly
 
 ## Quick start
 
-Available from both `ghcr.io/cplieger/docker-keepalived` and `docker.io/cplieger/docker-keepalived` — identical images and tags.
+Available from both `ghcr.io/cplieger/docker-keepalived` and `docker.io/cplieger/docker-keepalived`: identical images and tags.
 
 ```yaml
 services:
@@ -44,11 +38,11 @@ services:
       - NET_ADMIN
       - NET_RAW
 
-    # Mount your keepalived.conf — and any track / notify scripts it
-    # references. A scripts/ subdir alongside keepalived.conf is the
-    # natural layout, with paths like /etc/keepalived/scripts/<name>.sh.
+    # Mount your keepalived.conf and any track / notify scripts it references.
+    # A scripts/ subdir alongside keepalived.conf is the natural layout, with
+    # paths like /etc/keepalived/scripts/<name>.sh.
     volumes:
-      - ./keepalived:/etc/keepalived:ro
+      - "./keepalived:/etc/keepalived:ro"
 ```
 
 Minimal `keepalived.conf` (active node, priority 150):
@@ -79,7 +73,7 @@ vrrp_instance VI_1 {
         auth_pass changeme
     }
     virtual_ipaddress {
-        192.168.1.250/24
+        192.0.2.250/24
     }
     track_script {
         chk_app
@@ -100,12 +94,10 @@ Disabling track script chk_app due to insecure
 
 Inside the container, `/etc/keepalived` mirrors the host bind-mount source's ownership and mode. So you need to ensure:
 
-- The host directory you mount at `/etc/keepalived` is owned by `root:root`
-- The directory is **not group-writable or world-writable** (mode 755 is fine; 770 is not because group-writable counts as "writable by non-root")
-- Same for any `scripts/` subdirectory — must be `root:root` and not group-writable
-- Each track / notify script **file** must also be root-owned and not group/world-writable — keepalived applies the same check to the script file, not just its parent directories
+- The host directory you mount at `/etc/keepalived`, and any `scripts/` subdirectory, is owned by `root:root` and **not group- or world-writable** (mode 755 is fine; 770 is not, because group-writable counts as "writable by non-root")
+- Each track / notify script **file** must also be root-owned and not group/world-writable; keepalived applies the same check to the script file, not just its parent directories
 
-A common gotcha: many host bind-mount layouts inherit non-root ownership from a parent dir. Fix on each server with:
+Watch for host directories that inherit non-root ownership from a parent directory. Fix on each server with:
 
 ```bash
 chown -R root:root /path/to/keepalived
@@ -115,7 +107,7 @@ chmod 644 /path/to/keepalived/keepalived.conf
 find /path/to/keepalived/scripts -type f -exec chmod 755 {} +
 ```
 
-If you don't use `enable_script_security`, none of this applies — but you should use it.
+If you don't use `enable_script_security`, none of this applies, but you should use it.
 
 ## Configuration reference
 
@@ -142,16 +134,7 @@ VRRP multicast addresses (RFC 5798): `224.0.0.18` (IPv4), `ff02::12` (IPv6). `NE
 
 ## Healthcheck
 
-The built-in healthcheck verifies the keepalived process is running:
-
-```dockerfile
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
-    CMD pidof keepalived >/dev/null || exit 1
-```
-
-This catches the "process crashed" failure mode but not "VRRP is stuck": for that, watch the `notify` script logs and the VRRP_Script success/failure log lines, or scrape keepalived's stats interface (`SIGUSR2` triggers a stats dump to `/tmp/keepalived.stats`).
-
-The image runs `keepalived --dont-fork --log-console --log-detail`, so all VRRP state transitions, track-script success/failure lines, and the `Unsafe permissions found ... - disabling` warning are written to the container's stdout/stderr and appear in `docker logs keepalived` (and any log shipper scraping it). This is where you watch for a stuck VRRP or a silently-disabled track script that the `pidof` healthcheck cannot see.
+The built-in healthcheck runs `pidof keepalived` every 30s (5s timeout, 3 retries, 15s start period). It catches a crashed process but not a stuck VRRP. The image runs `keepalived --dont-fork --log-console --log-detail`, so every VRRP state transition, track-script success/failure line, and the `Unsafe permissions found ... - disabling` warning lands in `docker logs keepalived` (and any log shipper scraping it); watch there for what the `pidof` probe cannot see. `SIGUSR2` triggers a stats dump to `/tmp/keepalived.stats`.
 
 ## Alerting
 
@@ -161,7 +144,7 @@ keepalived logs VRRP state transitions and config events to its container log (t
 | --- | --- | --- |
 | `KeepalivedTrackScriptFailed` | a VRRP track script reports failed (failover imminent) | critical |
 | `KeepalivedFaultState` | a VRRP instance enters FAULT state and drops out of the election | critical |
-| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy — an unknown keyword, a `(Line N)`-prefixed parse error (e.g. invalid directive value), or a config file open/read failure | warning |
+| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy: an unknown keyword, a `(Line N)`-prefixed parse error (e.g. invalid directive value), or a config file open/read failure | warning |
 
 Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses.
 
@@ -173,15 +156,11 @@ To apply a config change without a container restart (no VIP transition):
 docker kill -s HUP keepalived
 ```
 
-keepalived re-reads `keepalived.conf` and applies any changes — track scripts are re-evaluated, instance config is reapplied. VRRP state is preserved for unchanged instances; only changed instances briefly renegotiate.
+keepalived re-reads `keepalived.conf` and applies any changes. VRRP state is preserved for unchanged instances; only changed instances briefly renegotiate.
 
 ## Security
 
-| Tool                                             | Result                              |
-| ------------------------------------------------ | ----------------------------------- |
-| [hadolint](https://github.com/hadolint/hadolint) | Clean                               |
-| [gitleaks](https://github.com/gitleaks/gitleaks) | No secrets detected                 |
-| [trivy](https://trivy.dev/)                      | Inherits the Alpine base image scan |
+The container runs as root by design: keepalived adds and removes the VIP on a host interface (`NET_ADMIN`) and constructs raw VRRP packets (`NET_RAW`). Grant those two capabilities with `cap_add` rather than `privileged`, and mount `/etc/keepalived` read-only so the container's writable surface stays zero. One scan finding is accepted: the "image user should not be root" misconfiguration check (AVD-DS-0002), because a non-root user cannot manage the VIP. Current scan results live in the repository's Security tab.
 
 The image is published with [cosign](https://github.com/sigstore/cosign) signatures and SBOM attestations. Verify a pull:
 
@@ -199,10 +178,10 @@ If you advertise IPv6 prefixes on the LAN with radvd, keepalived can manage the 
 
 Dependencies are updated automatically via [Renovate](https://github.com/renovatebot/renovate). The base image is pinned by SHA digest; keepalived itself is built from a pinned upstream source release whose tarball is SHA256-verified at build time, so a hash mismatch fails the build:
 
-- **Alpine Linux** — base image ([Docker Hub](https://hub.docker.com/_/alpine))
-- **keepalived** — built from the pinned upstream source tarball ([upstream](https://www.keepalived.org/)), version-tracked via GitHub tags, with feature parity to Alpine's packaged build (nftables, libnl3, OpenSSL, JSON; no SNMP, no systemd)
+- **Alpine Linux**: base image ([Docker Hub](https://hub.docker.com/_/alpine))
+- **keepalived**: built from the pinned upstream source tarball ([upstream](https://www.keepalived.org/)), with feature parity to Alpine's packaged build (nftables, libnl3, OpenSSL, JSON; no SNMP, no systemd)
 
-keepalived CVE currency is now event-driven: a new upstream release opens a Renovate PR that bumps the pinned version (the tarball SHA256 is recomputed in the same PR), and merging it rebuilds and republishes the image. The unpinned remainder is the Alpine runtime libraries keepalived links against (libnl3, libnftnl, libmnl, OpenSSL): those float forward at image build time (`apk upgrade`), so their CVE currency is still bounded by rebuild cadence. That cadence is bounded too: published images are rebuilt automatically once the last successful build exceeds a staleness interval, on top of the usual Renovate-triggered rebuilds. Operators who need faster patch response can still rebuild / pull on their own cadence or run a [trivy](https://trivy.dev/) scan of the `:latest` image.
+A new upstream keepalived release triggers a version bump, rebuild, and republish. The Alpine runtime libraries keepalived links against (libnl3, libnftnl, libmnl, OpenSSL) float forward at image build time, and published images are rebuilt automatically once the last successful build exceeds a staleness interval. Operators who need a faster patch response can rebuild or pull on their own cadence, or run a [trivy](https://trivy.dev/) scan of the `:latest` image.
 
 ### Migration note: source build (major version)
 
@@ -210,7 +189,7 @@ Earlier image versions installed keepalived from the Alpine community repository
 
 ## Credits
 
-This project packages [keepalived](https://github.com/acassen/keepalived) into a container image. All credit for the core functionality goes to the upstream maintainers — Alexandre Cassen and the keepalived community.
+This project packages [keepalived](https://github.com/acassen/keepalived) into a container image. All credit for the core functionality goes to the upstream maintainers, Alexandre Cassen and the keepalived community.
 
 ## Contributing
 
@@ -224,4 +203,4 @@ This project was built with AI-assisted tooling using [Claude](https://claude.co
 
 ## License
 
-This project is licensed under the [GNU General Public License v3.0](LICENSE).
+GPL-3.0. See [LICENSE](LICENSE).
