@@ -157,5 +157,5 @@ COPY --from=test /tests-passed /tests-passed
 # docker logs (VRRP state transitions, VRRP_Script lines) or the
 # SIGUSR2 stats dump for stuck-VRRP detection. See README "Healthcheck".
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
-    CMD pidof keepalived >/dev/null || exit 1
+    CMD ["pidof", "keepalived"]
 ENTRYPOINT ["keepalived", "--dont-fork", "--log-console", "--log-detail"]
