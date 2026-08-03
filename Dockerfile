@@ -2,12 +2,12 @@
 
 # Renovate bumps KEEPALIVED_VERSION via the org-wide Dockerfile ARG
 # customManager (github-tags). KEEPALIVED_SHA256 pins the upstream dist
-# tarball and must be recomputed in the same PR (github-tags exposes the git
-# sha, not the tarball hash, so the bump PR carries a stale hash and
-# fail-closes the build until it is updated):
-# curl -sL https://www.keepalived.org/software/keepalived-<X.Y.Z>.tar.gz | sha256sum
+# tarball; github-tags exposes the git sha, not the tarball hash, so the
+# marker below drives the repin postUpgradeTask, which recomputes the hash
+# in the same commit as the version bump. A mismatch fail-closes the build.
 # renovate: datasource=github-tags depName=acassen/keepalived
 ARG KEEPALIVED_VERSION=v2.4.3
+# repin: dep=acassen/keepalived url=https://www.keepalived.org/software/keepalived-{version_nov}.tar.gz
 ARG KEEPALIVED_SHA256=a0faef8e401c143487b131b526df7541c1e33d9b8814642fa9dfe8bb250a9632
 
 # ---------------------------------------------------------------------------
