@@ -189,7 +189,7 @@ Earlier image versions installed keepalived from the Alpine community repository
 
 ## Credits
 
-This project packages [keepalived](https://github.com/acassen/keepalived) into a container image. All credit for the core functionality goes to the upstream maintainers, Alexandre Cassen and the keepalived community.
+This project packages [keepalived](https://github.com/acassen/keepalived) (GPL-2.0) into a container image. All credit for the core functionality goes to the upstream maintainers, Alexandre Cassen and the keepalived community.
 
 ## Contributing
 
@@ -203,4 +203,4 @@ This project was built with AI-assisted tooling using [Claude](https://claude.co
 
 ## License
 
-GPL-3.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE).
