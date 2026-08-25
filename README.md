@@ -107,7 +107,7 @@ chmod 644 /path/to/keepalived/keepalived.conf
 find /path/to/keepalived/scripts -type f -exec chmod 755 {} +
 ```
 
-If you don't use `enable_script_security`, none of this applies, but you should use it.
+If you don't use `enable_script_security`, the script-permission rules above do not apply, but you should use it. One check applies either way: keepalived skips any config file that is not a regular file or has an execute bit set (`Configuration file '...' is not a regular non-executable file - skipping`), and then starts with nothing to run while the `pidof` healthcheck still reports healthy — so keep `keepalived.conf` mode 644, whatever else you set.
 
 ## Configuration reference
 
@@ -170,7 +170,7 @@ keepalived logs VRRP state transitions and config events to its container log (t
 | --- | --- | --- |
 | `KeepalivedTrackScriptFailed` | a VRRP track script reports failed or times out (failover imminent) | critical |
 | `KeepalivedFaultState` | a VRRP instance enters FAULT state and drops out of the election | critical |
-| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy: an unknown keyword, a `(Line N)`-prefixed parse error, a config file it could not open or read, a track or notify script it refused to run, an interface that does not exist on the host, an instance disabled by a config fault, or a config that declared nothing to run | warning |
+| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy: an unknown keyword, a `(Line N)`-prefixed parse error, a config file it could not open or read or skipped as executable, a track or notify script it refused to run, an interface that does not exist on the host, an instance disabled by a config fault, or a config that declared nothing to run | warning |
 | `KeepalivedChildRespawned` | a keepalived child process died and was respawned (the log line names which child) | warning |
 | `KeepalivedMemlockFailed` | `mlockall` failed, so `vrrp_no_swap` is inert and the VRRP child can be swapped out | warning |
 
