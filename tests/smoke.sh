@@ -1,13 +1,12 @@
 #!/bin/sh
 # Build-time smoke test for docker-keepalived.
 #
-# Runs in the Dockerfile `test` stage, so the centralized `ci / validate`
-# docker build-ability gate executes it on every PR and push (the final image
-# stage depends on this stage's marker). Catches a broken keepalived build
-# (missing shared libs, wrong version shipped, a dropped parity feature), a
-# config the binary rejects, and a missing or version-drifted embedded SBOM
-# fragment: the real failure modes for an image that compiles its payload
-# from upstream source.
+# Runs in the Dockerfile `test` stage, and the final image stage depends on
+# this stage's marker, so an image build cannot skip it. Catches a broken
+# keepalived build (missing shared libs, wrong version shipped, a dropped
+# parity feature), a config the binary rejects, and a missing or
+# version-drifted embedded SBOM fragment: the real failure modes for an image
+# that compiles its payload from upstream source.
 #
 # Run locally:  sh tests/smoke.sh   (needs the keepalived binary on PATH;
 # set KEEPALIVED_EXPECTED_VERSION=<X.Y.Z> to also run the exact-version check)
@@ -143,6 +142,43 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
   fi
 else
   log "note: KEEPALIVED_EXPECTED_VERSION unset - skipping SBOM fragment check (local run)"
+fi
+
+# 4. Alert-matcher anchors: every literal alerts.yaml keys on must still
+#    exist in the binary this image ships. The rule pack is a substring
+#    match on upstream's log wording, KEEPALIVED_VERSION bumps automerge,
+#    and nothing else re-reads the matchers, so a reworded format string
+#    would decouple the published rules from the running daemon with no
+#    human in the loop. Keep this list in step with alerts.yaml.
+#    NULs become newlines first: BusyBox grep matches inside a
+#    NUL-terminated line buffer, so a raw grep of the binary can miss a
+#    literal that sits after a NUL on the same "line".
+if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
+  for lit in \
+    'VRRP_Script(%s) %s' \
+    'timed_out' \
+    'Entering FAULT STATE' \
+    'entering FAULT state' \
+    'leaving FAULT state' \
+    "Unknown keyword '" \
+    'Line %zu)' \
+    'Unable to read configuration file' \
+    'Unable to find configuration file' \
+    'Failed to open configuration file' \
+    "Configuration file '" \
+    '- disabling' \
+    'Disabling track script' \
+    'Non-existent interface specified in configuration' \
+    'died: Respawning' \
+    'Unable to lock process in memory'; do
+    if ! tr '\0' '\n' </usr/sbin/keepalived | grep -qF -- "$lit"; then
+      err "FAIL: alert matcher anchor missing from the shipped binary: $lit"
+      err "      re-read alerts.yaml against the keepalived sources for this release"
+      fail=1
+    fi
+  done
+else
+  log "note: KEEPALIVED_EXPECTED_VERSION unset - skipping alert-anchor check (local run)"
 fi
 
 [ "$fail" -eq 0 ] && log "keepalived smoke: ok"

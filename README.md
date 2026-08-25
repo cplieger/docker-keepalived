@@ -147,7 +147,7 @@ Those options make the child process call `mlockall()`, and `RLIMIT_MEMLOCK` is 
 
 Two failure modes, so you can tell them apart in `docker logs`:
 
-- **Limit below the child's virtual size.** `mlockall` fails at startup, keepalived logs `Unable to lock process in memory - Cannot allocate memory` once, and carries on with `vrrp_no_swap` silently inert from then on. No shipped alert rule matches that line — grep for it after a deploy that turns the option on.
+- **Limit below the child's virtual size.** `mlockall` fails at startup, keepalived logs `Unable to lock process in memory - Cannot allocate memory` once, and carries on with `vrrp_no_swap` silently inert from then on. The `KeepalivedMemlockFailed` rule in [`alerts.yaml`](alerts.yaml) is what catches it (see [Alerting](#alerting)).
 - **Limit just above it.** The lock succeeds and a later allocation is refused instead: `Keepalived: Resource temporarily unavailable` (no timestamp — it is a `perror`, not a log line), the VRRP child exits 204, and the parent respawns it, which moves the VIP out and back. The `pidof` healthcheck stays green, because the parent is what survives; the `KeepalivedChildRespawned` rule in [`alerts.yaml`](alerts.yaml) is what catches it (see [Alerting](#alerting)). keepalived prints `Please log an issue at ...` for any child death, so that banner is not evidence of an upstream bug.
 
 Check what your host actually granted:
@@ -172,6 +172,7 @@ keepalived logs VRRP state transitions and config events to its container log (t
 | `KeepalivedFaultState` | a VRRP instance enters FAULT state and drops out of the election | critical |
 | `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy: an unknown keyword, a `(Line N)`-prefixed parse error, a config file it could not open or read, a track or notify script it refused to run, an interface that does not exist on the host, or an instance disabled by a config fault | warning |
 | `KeepalivedChildRespawned` | a keepalived child process died and was respawned, moving the VIPs off this node and back | warning |
+| `KeepalivedMemlockFailed` | `mlockall` failed, so `vrrp_no_swap` is inert and the VRRP child can be swapped out | warning |
 
 Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses. These rules cover what a still-running node reports about itself. They do not cover a completed takeover: when a master node dies outright it logs nothing and the survivor logs only `Entering MASTER STATE`, which every legitimate boot election logs too — deciding whether a given node holding MASTER is wrong needs your topology, so a rule for it belongs in your own rule set alongside these.
 

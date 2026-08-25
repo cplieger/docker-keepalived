@@ -9,7 +9,6 @@ FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6ee
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
-# hadolint ignore=DL3018
 RUN apk add --no-cache \
         build-base \
         libmnl-dev \
@@ -23,13 +22,19 @@ ARG KEEPALIVED_VERSION
 ARG KEEPALIVED_SHA256
 
 WORKDIR /build/keepalived
-# --enable-nftables/--disable-iptables are explicit so configure fails loudly
-# instead of silently dropping a feature the APKBUILD gets implicitly.
-RUN wget -q --timeout=30 \
-      "https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.tar.gz" \
-    && echo "${KEEPALIVED_SHA256}  keepalived-${KEEPALIVED_VERSION#v}.tar.gz" | sha256sum -c - \
-    && tar xzf "keepalived-${KEEPALIVED_VERSION#v}.tar.gz" --strip-components=1 --no-same-owner \
-    && rm "keepalived-${KEEPALIVED_VERSION#v}.tar.gz" \
+# --enable-nftables turns missing nftables headers into a configure error
+# rather than a silent feature drop; missing libnftnl/libmnl only warn, so
+# tests/smoke.sh's Config-options assertion is what catches those.
+# Syft's catalogers do not identify this source-built keepalived, so the
+# image carries a CycloneDX fragment for it; the release pipeline's
+# sbom-cataloger discovers the fragment by its .cdx.json suffix, not by
+# this path.
+RUN url="https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.tar.gz" \
+    && tarball="${url##*/}" \
+    && wget -q --timeout=30 "$url" \
+    && echo "${KEEPALIVED_SHA256}  ${tarball}" | sha256sum -c - \
+    && tar xzf "$tarball" --strip-components=1 --no-same-owner \
+    && rm "$tarball" \
     && ./configure \
         --prefix=/usr \
         --sysconfdir=/etc \
@@ -41,11 +46,7 @@ RUN wget -q --timeout=30 \
         --disable-systemd \
     && make -j"$(nproc)" \
     && install -D -m 755 bin/keepalived /out/usr/sbin/keepalived \
-    && strip /out/usr/sbin/keepalived
-
-# Syft reads only Alpine's APK database, so the source-built binary needs this
-# fragment to reach the SBOM; /usr/share/sbom/ is where the cataloger looks.
-RUN cat > /out/keepalived.cdx.json <<EOF
+    && cat > /out/keepalived.cdx.json <<EOF
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
@@ -56,7 +57,7 @@ RUN cat > /out/keepalived.cdx.json <<EOF
       "type": "application",
       "name": "keepalived",
       "version": "${KEEPALIVED_VERSION#v}",
-      "purl": "pkg:generic/keepalived@${KEEPALIVED_VERSION#v}?download_url=https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.tar.gz&checksum=sha256:${KEEPALIVED_SHA256}",
+      "purl": "pkg:generic/keepalived@${KEEPALIVED_VERSION#v}?download_url=${url}&checksum=sha256:${KEEPALIVED_SHA256}",
       "cpe": "cpe:2.3:a:keepalived:keepalived:${KEEPALIVED_VERSION#v}:*:*:*:*:*:*:*"
     }
   ]

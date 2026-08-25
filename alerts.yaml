@@ -2,13 +2,15 @@
 # ship the container's logs to Loki and evaluate with Loki's ruler; firing
 # alerts deliver through your Alertmanager like any Prometheus alert. Thresholds
 # and the severity labels are starting points; adjust the container and label
-# selectors to your deployment.
+# selectors to your deployment. Every matcher below is a fixed substring of a
+# format string in the pinned keepalived release; tests/smoke.sh section 4
+# anchors each one in the shipped binary, so keep the two in step.
 groups:
   - name: keepalived
     rules:
       - alert: KeepalivedTrackScriptFailed
         expr: |
-          sum by (hostname) (count_over_time({container="keepalived"} |= "VRRP_Script(" |~ "failed|timed_out" [15m])) > 0
+          sum by (hostname) (count_over_time({container="keepalived"} |= "VRRP_Script(" |~ "VRRP_Script\\(.*\\) (failed|timed_out)( \\(|$)" [15m])) > 0
         for: 0m
         labels:
           severity: critical
@@ -20,7 +22,7 @@ groups:
             failover is imminent or in progress.
       - alert: KeepalivedFaultState
         expr: |
-          sum by (hostname) (count_over_time({container="keepalived"} |~ "(?i)FAULT state" [15m])) > 0
+          sum by (hostname) (count_over_time({container="keepalived"} |~ "(?i)FAULT state" != "leaving FAULT state" [15m])) > 0
         for: 0m
         labels:
           severity: critical
@@ -74,3 +76,20 @@ groups:
             back, stranding every long-lived connection through it. The
             container healthcheck cannot see this: the parent survives. Check
             the log lines just before this one for the child's exit status.
+      - alert: KeepalivedMemlockFailed
+        expr: |
+          sum by (hostname) (count_over_time({container="keepalived"} |= "Unable to lock process in memory" [15m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Keepalived could not lock memory (vrrp_no_swap inert)"
+          description: >
+            keepalived's config asks for vrrp_no_swap (or checker_no_swap /
+            bfd_no_swap) but mlockall failed, so the option is inert for the
+            life of this process and the child can be swapped out. keepalived
+            appends the errno to that log line: read it, then check both the
+            container's locked-memory limit (RLIMIT_MEMLOCK, see README
+            "Resource limits") and whether the container has CAP_IPC_LOCK.
+            keepalived logs this once at startup and carries on, so nothing
+            else reports it.
