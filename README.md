@@ -18,7 +18,7 @@ This image is a minimal Alpine wrapper around upstream `keepalived`, compiled fr
 ### Why this design
 
 - **Generic upstream-only**: no custom track scripts baked in, so the image works for any VRRP topology without inheriting someone else's check logic
-- **Bind-mount only**: a single read-only `:ro` mount of `/etc/keepalived` keeps the container's writable surface zero
+- **Bind-mount only**: all configuration arrives through one read-only `:ro` mount of `/etc/keepalived`, and the published example adds no writable bind mounts
 - **No PID 1 wrapper**: `keepalived --dont-fork` runs as PID 1 directly, so SIGTERM from `docker stop` reaches it instantly
 
 ## Quick start
@@ -132,6 +132,32 @@ If you don't use `enable_script_security`, none of this applies, but you should 
 
 VRRP multicast addresses (RFC 5798): `224.0.0.18` (IPv4), `ff02::12` (IPv6). `NET_BROADCAST` is **not** required.
 
+### Resource limits
+
+The image needs no resource limits to run, with one exception. If your `keepalived.conf` sets `vrrp_no_swap` (or `checker_no_swap` / `bfd_no_swap`), raise the container's locked-memory limit too, or the option will not do what it says.
+
+Those options make the child process call `mlockall()`, and `RLIMIT_MEMLOCK` is charged against locked _address space_, not resident memory. A container that sets no `ulimits:` inherits the Docker daemon's own limit, which on a systemd host is 8 MiB unless the daemon's unit says otherwise. This image's VRRP child maps about 7.4 MiB of program text and shared libraries before its first allocation (OpenSSL's libcrypto is 4.8 MiB of that, amd64), so 8 MiB leaves it almost no room — and 64 KiB, the kernel default on hosts with no systemd bump, leaves it none at all.
+
+```yaml
+    ulimits:
+      memlock:
+        soft: 67108864  # 64 MiB, ~8x the child's mapped size
+        hard: 67108864
+```
+
+Two failure modes, so you can tell them apart in `docker logs`:
+
+- **Limit below the child's virtual size.** `mlockall` fails at startup, keepalived logs `Unable to lock process in memory - Cannot allocate memory` once, and carries on with `vrrp_no_swap` silently inert from then on. No shipped alert rule matches that line — grep for it after a deploy that turns the option on.
+- **Limit just above it.** The lock succeeds and a later allocation is refused instead: `Keepalived: Resource temporarily unavailable` (no timestamp — it is a `perror`, not a log line), the VRRP child exits 204, and the parent respawns it, which moves the VIP out and back. The `pidof` healthcheck stays green, because the parent is what survives; the `KeepalivedChildRespawned` rule in [`alerts.yaml`](alerts.yaml) is what catches it (see [Alerting](#alerting)). keepalived prints `Please log an issue at ...` for any child death, so that banner is not evidence of an upstream bug.
+
+Check what your host actually granted:
+
+```bash
+docker exec keepalived grep 'Max locked memory' /proc/1/limits
+```
+
+Sizing caveat: keepalived's interface table gains an entry per interface the host has ever had and does not release it ([upstream #2709](https://github.com/acassen/keepalived/issues/2709)), and every container start on the host creates a veth. So on a busy host a finite limit sets how long the child lives rather than preventing the exit — headroom buys time, it is not a cure.
+
 ## Healthcheck
 
 The built-in healthcheck runs `pidof keepalived` every 30s (5s timeout, 3 retries, 15s start period). It catches a crashed process but not a stuck VRRP. The image runs `keepalived --dont-fork --log-console --log-detail`, so every VRRP state transition, track-script success/failure line, and the `Unsafe permissions found ... - disabling` warning lands in `docker logs keepalived` (and any log shipper scraping it); watch there for what the `pidof` probe cannot see. `SIGUSR2` triggers a stats dump to `/tmp/keepalived.stats`.
@@ -142,11 +168,12 @@ keepalived logs VRRP state transitions and config events to its container log (t
 
 | Alert | Fires when | Severity |
 | --- | --- | --- |
-| `KeepalivedTrackScriptFailed` | a VRRP track script reports failed (failover imminent) | critical |
+| `KeepalivedTrackScriptFailed` | a VRRP track script reports failed or times out (failover imminent) | critical |
 | `KeepalivedFaultState` | a VRRP instance enters FAULT state and drops out of the election | critical |
-| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy: an unknown keyword, a `(Line N)`-prefixed parse error (e.g. invalid directive value), or a config file open/read failure | warning |
+| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy: an unknown keyword, a `(Line N)`-prefixed parse error, a config file it could not open or read, a track or notify script it refused to run, an interface that does not exist on the host, or an instance disabled by a config fault | warning |
+| `KeepalivedChildRespawned` | a keepalived child process died and was respawned, moving the VIPs off this node and back | warning |
 
-Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses.
+Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses. These rules cover what a still-running node reports about itself. They do not cover a completed takeover: when a master node dies outright it logs nothing and the survivor logs only `Entering MASTER STATE`, which every legitimate boot election logs too — deciding whether a given node holding MASTER is wrong needs your topology, so a rule for it belongs in your own rule set alongside these.
 
 ## Reload without restart
 
@@ -160,7 +187,17 @@ keepalived re-reads `keepalived.conf` and applies any changes. VRRP state is pre
 
 ## Security
 
-The container runs as root by design: keepalived adds and removes the VIP on a host interface (`NET_ADMIN`) and constructs raw VRRP packets (`NET_RAW`). Grant those two capabilities with `cap_add` rather than `privileged`, and mount `/etc/keepalived` read-only so the container's writable surface stays zero. One scan finding is accepted: the "image user should not be root" misconfiguration check (AVD-DS-0002), because a non-root user cannot manage the VIP. Current scan results live in the repository's Security tab.
+The container runs as root by design: keepalived adds and removes the VIP on a host interface (`NET_ADMIN`) and constructs raw VRRP packets (`NET_RAW`). Grant those two capabilities with `cap_add` rather than `privileged`, and mount `/etc/keepalived` read-only. That mount is the only bind mount the image needs. One scan finding is accepted: the "image user should not be root" misconfiguration check (AVD-DS-0002), because a non-root user cannot manage the VIP. Current scan results live in the repository's Security tab.
+
+The container root filesystem stays writable, so `read_only: true` is not free. At startup keepalived creates its own pidfile and its VRRP child's pidfile under `/run`. If it cannot create a pidfile, it treats the failure as proof that a second instance runs: on a read-only root it logs `daemon is already running` and exits, and that message names the wrong cause. A tmpfs at `/run` is all the hardened profile needs:
+
+```yaml
+    read_only: true
+    tmpfs:
+      - /run:size=1m
+```
+
+`/tmp` is a separate question. The `SIGUSR2` stats dump writes `/tmp/keepalived.stats`. On a read-only root that dump logs `Can't open /tmp/keepalived.stats` and keepalived continues. Add a second tmpfs at `/tmp` only if you use the dump.
 
 The image is published with [cosign](https://github.com/sigstore/cosign) signatures and SBOM attestations. Verify a pull:
 

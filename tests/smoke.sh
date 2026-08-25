@@ -52,16 +52,29 @@ for feat in NFTABLES JSON; do
   fi
 done
 
+# 1c. genhash mode: the shipped /usr/bin/genhash must actually run keepalived's
+#     genhash, which is a compile-time-conditional argv[0] dispatch (_WITH_LVS_),
+#     not a property of the symlink. Gated like 1a/3: it reads the image filesystem.
+if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
+  gh_out=$(/usr/bin/genhash -h 2>&1) || true
+  if ! printf '%s\n' "$gh_out" | grep -q -- '--use-virtualhost'; then
+    err "FAIL: /usr/bin/genhash does not run in genhash mode"
+    err "$gh_out"
+    fail=1
+  fi
+else
+  log "note: KEEPALIVED_EXPECTED_VERSION unset - skipping genhash mode check (local run)"
+fi
+
 # 2. keepalived's own config-test mode (-t) accepts a valid VRRP config.
-#    The config enables enable_script_security, which makes keepalived
-#    security-check the config FILE itself: keepalived skips (does not
-#    parse) any config file that is not a regular file or has any execute
-#    bit set ("not a regular non-executable file - skipping"), and -t then
-#    exits 0 without parsing anything - a vacuous pass. Build contexts on
-#    some filesystems (e.g. Windows/WSL bind mounts) expose 0777, whose
-#    execute bits trigger the skip, so copy to a root-owned 0644 temp file
-#    first to guarantee the config is actually parsed. Also fail if
-#    keepalived reports skipping. (The writable-bit "Unsafe permissions"
+#    keepalived checks every config file before parsing it, independent of
+#    enable_script_security: it skips (does not parse) any config file that
+#    is not a regular file or has any execute bit set ("not a regular
+#    non-executable file - skipping"), and -t then exits 0 without parsing
+#    anything - a vacuous pass. Build contexts on some filesystems (e.g.
+#    Windows/WSL bind mounts) expose 0777, whose execute bits trigger the
+#    skip, so copy to a root-owned 0644 temp file first to guarantee the
+#    config is actually parsed. (The writable-bit "Unsafe permissions"
 #    check is a separate path that applies to track/notify SCRIPTS, not the
 #    config file.)
 conf=$(mktemp)
@@ -74,17 +87,13 @@ out=$(keepalived -t -f "$conf" --log-console --log-detail 2>&1) || {
   err "$out"
   fail=1
 }
-if printf '%s' "$out" | grep -q 'skipping'; then
-  err "FAIL: 'keepalived -t' skipped the config file instead of parsing it"
-  err "$out"
-  fail=1
-fi
 
 # 2a. Negative control: the same config minus `script_user root` must be
 #     REJECTED (enable_script_security then finds no keepalived_script user,
 #     rc 5). Proves -t can actually reject a bad config, independent of any
-#     log-message wording — the backstop if upstream ever reworks the
-#     'skipping' notice the grep above relies on.
+#     log-message wording — the wording-independent guard against a vacuous
+#     -t pass (a skipped config file exits 0 without parsing, and a skipped
+#     bad config fails this check).
 grep -v 'script_user root' "$d/keepalived.conf" >"$bad"
 chmod 0644 "$bad"
 if bad_out=$(keepalived -t -f "$bad" --log-console --log-detail 2>&1); then
