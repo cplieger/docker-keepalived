@@ -2,15 +2,26 @@
 # ship the container's logs to Loki and evaluate with Loki's ruler; firing
 # alerts deliver through your Alertmanager like any Prometheus alert. Thresholds
 # and the severity labels are starting points; adjust the container and label
-# selectors to your deployment. Every matcher below is a fixed substring of a
-# format string in the pinned keepalived release; tests/smoke.sh section 4
-# anchors each one in the shipped binary, so keep the two in step.
+# selectors to your deployment.
+#
+# Each matcher keys on wording from a format string in the pinned keepalived
+# release, but three do so through a regex rather than a plain substring:
+# TrackScriptFailed binds the status word to its own field with a word
+# boundary, FaultState spans two upstream casings, ConfigError alternates
+# over several patterns. Read a matcher edit for regex semantics as well as
+# for wording drift.
+# tests/smoke.sh section 4 anchors the discriminating literals in the shipped
+# binary; keep the two in step. It cannot anchor the bare status word
+# 'failed' - upstream stores it separately from the format string it lands
+# in, and the binary carries unrelated strings containing it, so a grep for
+# it could never fail. That one word is ungated: re-read it against the
+# sources on a keepalived bump.
 groups:
   - name: keepalived
     rules:
       - alert: KeepalivedTrackScriptFailed
         expr: |
-          sum by (hostname) (count_over_time({container="keepalived"} |= "VRRP_Script(" |~ "VRRP_Script\\(.*\\) (failed|timed_out)( \\(|$)" [15m])) > 0
+          sum by (hostname) (count_over_time({container="keepalived"} |= "VRRP_Script(" |~ "VRRP_Script\\(.*\\) (failed|timed_out)\\b" [15m])) > 0
         for: 0m
         labels:
           severity: critical

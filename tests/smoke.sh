@@ -8,8 +8,11 @@
 # version-drifted embedded SBOM fragment: the real failure modes for an image
 # that compiles its payload from upstream source.
 #
-# Run locally:  sh tests/smoke.sh   (needs the keepalived binary on PATH;
-# set KEEPALIVED_EXPECTED_VERSION=<X.Y.Z> to also run the exact-version check)
+# Run locally:  sh tests/smoke.sh   (needs the keepalived binary on PATH.
+# Sections 1a, 1c, 3 and 4 run only when KEEPALIVED_EXPECTED_VERSION is
+# set, which the Dockerfile test stage does; each skips here with a
+# notice. Do not set it by hand on a host: section 3 reads the SBOM
+# fragment, which ships only in this image, so it fails.)
 set -eu
 
 d=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -108,9 +111,9 @@ fi
 #    failure mode the fragment exists to prevent. Gated on
 #    KEEPALIVED_EXPECTED_VERSION like section 1a: in-image the Dockerfile's
 #    :? guard guarantees the variable, so the gate can never silently skip;
-#    a bare local run (no image filesystem) skips with a notice. BusyBox
-#    has no jq, so assert shape with grep: non-empty, starts with { and
-#    ends with }.
+#    a bare local run (no image filesystem) skips with a notice. The
+#    Dockerfile test stage installs jq for the parse below; the runtime
+#    image ships none.
 if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
   sbom=/usr/share/sbom/keepalived.cdx.json
   expected=${KEEPALIVED_EXPECTED_VERSION#v}
@@ -118,25 +121,38 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
     err "FAIL: embedded SBOM fragment missing or empty: $sbom"
     fail=1
   else
-    if [ "$(head -c 1 "$sbom")" != "{" ] || [ "$(tail -c 2 "$sbom")" != "}" ]; then
-      err "FAIL: embedded SBOM fragment is not a JSON object (bad first/last byte)"
-      fail=1
-    fi
-    grep -q '"name": "keepalived"' "$sbom" || {
-      err "FAIL: embedded SBOM fragment missing component: keepalived"
+    # Every assertion accumulates into $fail instead of aborting, so a
+    # malformed fragment still leaves section 4's result in the build log.
+    jq -e . "$sbom" >/dev/null || {
+      err "FAIL: embedded SBOM fragment is not valid JSON: $sbom"
       fail=1
     }
-    # Exactly one version-shaped component version ("version": 1 — the BOM
-    # serial, unquoted — and "specVersion" don't match the pattern).
-    # grep -c prints the count (0 included) even when it exits 1 on zero
-    # matches; || true keeps set -e from aborting before the FAIL report.
-    versions=$(grep -c '"version": "[0-9][0-9.]*"' "$sbom" || true)
-    if [ "$versions" -ne 1 ]; then
-      err "FAIL: embedded SBOM fragment has $versions version-shaped component versions (want 1)"
+    jq -e '.components | length == 1' "$sbom" >/dev/null || {
+      err "FAIL: embedded SBOM fragment does not carry exactly one component"
       fail=1
-    fi
-    grep -qF "\"version\": \"${expected}\"" "$sbom" || {
+    }
+    jq -e '.components[0].name == "keepalived"' "$sbom" >/dev/null || {
+      err "FAIL: embedded SBOM fragment component is not named keepalived"
+      fail=1
+    }
+    jq -e --arg want "$expected" '.components[0].version == $want' "$sbom" >/dev/null || {
       err "FAIL: embedded SBOM fragment version is not v${expected} (ARG wiring broken?)"
+      fail=1
+    }
+    # The download_url is asserted literally (it derives from the same ARG
+    # by construction, Dockerfile:32); the checksum by shape only, because
+    # a wrong sha already fails the build at Dockerfile:35's sha256sum -c.
+    purl_prefix="pkg:generic/keepalived@${expected}?download_url=https://www.keepalived.org/software/keepalived-${expected}.tar.gz&checksum=sha256:"
+    jq -e --arg want "$purl_prefix" \
+      '.components[0].purl as $p
+       | ($p | startswith($want))
+         and ($p[($want | length):] | test("^[0-9a-f]{64}$"))' "$sbom" >/dev/null || {
+      err "FAIL: embedded SBOM fragment purl is not ${purl_prefix}<64 hex> (provenance lost?)"
+      fail=1
+    }
+    jq -e --arg want "cpe:2.3:a:keepalived:keepalived:${expected}:*:*:*:*:*:*:*" \
+      '.components[0].cpe == $want' "$sbom" >/dev/null || {
+      err "FAIL: embedded SBOM fragment cpe is not cpe:2.3:a:keepalived:keepalived:${expected}:*:*:*:*:*:*:*"
       fail=1
     }
   fi
@@ -144,12 +160,21 @@ else
   log "note: KEEPALIVED_EXPECTED_VERSION unset - skipping SBOM fragment check (local run)"
 fi
 
-# 4. Alert-matcher anchors: every literal alerts.yaml keys on must still
-#    exist in the binary this image ships. The rule pack is a substring
-#    match on upstream's log wording, KEEPALIVED_VERSION bumps automerge,
+# 4. Alert-matcher anchors: the discriminating literals alerts.yaml keys
+#    on must still exist in the binary this image ships. The rule pack
+#    matches upstream's log wording, KEEPALIVED_VERSION bumps automerge,
 #    and nothing else re-reads the matchers, so a reworded format string
 #    would decouple the published rules from the running daemon with no
 #    human in the loop. Keep this list in step with alerts.yaml.
+#    Deliberately NOT covered: KeepalivedTrackScriptFailed's `failed`
+#    status word. Upstream assigns it to script_exit_type separately from
+#    the "VRRP_Script(%s) %s" format string it is substituted into, so
+#    anchoring the format string certifies nothing about it - which is why
+#    `timed_out` needs its own entry below - and the binary carries
+#    unrelated strings containing "failed", so `grep -qF -- 'failed'` is
+#    an assertion that cannot fail. Do not add it: a vacuous gate is
+#    worse than a documented hole. alerts.yaml's header records the same
+#    hole for the reader of the pack.
 #    NULs become newlines first: BusyBox grep matches inside a
 #    NUL-terminated line buffer, so a raw grep of the binary can miss a
 #    literal that sits after a NUL on the same "line".

@@ -11,6 +11,7 @@ SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
 RUN apk add --no-cache \
         build-base \
+        curl \
         libmnl-dev \
         libnftnl-dev \
         libnl3-dev \
@@ -31,7 +32,7 @@ WORKDIR /build/keepalived
 # this path.
 RUN url="https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.tar.gz" \
     && tarball="${url##*/}" \
-    && wget -q --timeout=30 "$url" \
+    && curl -fsSL --connect-timeout 10 --max-time 120 --retry 7 --retry-max-time 150 --retry-all-errors -o "$tarball" "$url" \
     && echo "${KEEPALIVED_SHA256}  ${tarball}" | sha256sum -c - \
     && tar xzf "$tarball" --strip-components=1 --no-same-owner \
     && rm "$tarball" \
@@ -85,6 +86,7 @@ RUN ln -s ../sbin/keepalived /usr/bin/genhash
 
 FROM base AS test
 ARG KEEPALIVED_VERSION
+RUN apk add --no-cache jq
 COPY tests/ /tmp/tests/
 # ${KEEPALIVED_VERSION:?} fails the build if the ARG wiring ever breaks, so
 # the smoke test's exact-version assertion can never be skipped in-image.
