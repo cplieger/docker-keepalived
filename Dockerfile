@@ -26,6 +26,10 @@ WORKDIR /build/keepalived
 # --enable-nftables turns missing nftables headers into a configure error
 # rather than a silent feature drop; missing libnftnl/libmnl only warn, so
 # tests/smoke.sh's Config-options assertion is what catches those.
+# --disable-bfd keeps BFD out by construction: alerts.yaml and README.md are
+# scoped to the directives this build installs, --enable-bfd is opt-in in
+# this release, and a flipped upstream default would otherwise reach the
+# image with no human in the loop. tests/smoke.sh section 1b detects it.
 # Syft's catalogers do not identify this source-built keepalived, so the
 # image carries a CycloneDX fragment for it; the release pipeline's
 # sbom-cataloger discovers the fragment by its .cdx.json suffix, not by
@@ -43,6 +47,7 @@ RUN url="https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.
         --localstatedir=/var \
         --enable-json \
         --enable-nftables \
+        --disable-bfd \
         --disable-iptables \
         --disable-systemd \
     && make -j"$(nproc)" \
@@ -86,11 +91,15 @@ RUN ln -s ../sbin/keepalived /usr/bin/genhash
 
 FROM base AS test
 ARG KEEPALIVED_VERSION
+ARG KEEPALIVED_SHA256
 RUN apk add --no-cache jq
 COPY tests/ /tmp/tests/
-# ${KEEPALIVED_VERSION:?} fails the build if the ARG wiring ever breaks, so
-# the smoke test's exact-version assertion can never be skipped in-image.
-RUN KEEPALIVED_EXPECTED_VERSION="${KEEPALIVED_VERSION:?}" sh /tmp/tests/smoke.sh \
+# The `:?` guards fail the build if either ARG's wiring ever breaks, so the
+# smoke test's exact version and checksum assertions can never be skipped
+# in-image.
+RUN KEEPALIVED_EXPECTED_VERSION="${KEEPALIVED_VERSION:?}" \
+    KEEPALIVED_EXPECTED_SHA256="${KEEPALIVED_SHA256:?}" \
+    sh /tmp/tests/smoke.sh \
     && touch /tests-passed
 
 # Final stage — must stay last (the CI gate builds the default target); the

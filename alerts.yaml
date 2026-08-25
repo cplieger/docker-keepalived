@@ -16,6 +16,11 @@
 # in, and the binary carries unrelated strings containing it, so a grep for
 # it could never fail. That one word is ungated: re-read it against the
 # sources on a keepalived bump.
+# README.md restates what these rules mean and the operator guidance they
+# depend on — the Alerting table and the surrounding operator sections —
+# and nothing checks the two agree, so an edit here that changes what a
+# rule means, when it fires, or which keepalived directives it talks about
+# is an edit there too.
 groups:
   - name: keepalived
     rules:
@@ -54,7 +59,7 @@ groups:
           )) > 0
           or sum by (hostname) (count_over_time(
             {container="keepalived"}
-            |~ "- disabling|Disabling track script|Non-existent interface specified in configuration" [15m]
+            |~ "- disabling|Disabling track script|Non-existent interface specified in configuration|has no configuration to run" [15m]
           )) > 0
         for: 0m
         labels:
@@ -70,7 +75,10 @@ groups:
             executable, or not found), an interface named in the config
             that does not exist on the host, or a VRRP instance disabled
             by a config fault such as an interface that cannot do
-            multicast. Review your keepalived.conf. A refused track script
+            multicast, or a config that parsed but declared no VRRP
+            instance or LVS virtual server at all — the daemon then runs
+            with nothing to do and the container healthcheck still reports
+            healthy. Review your keepalived.conf. A refused track script
             means this node will never fail over on that check — see
             README "enable_script_security".
       - alert: KeepalivedChildRespawned
@@ -82,11 +90,13 @@ groups:
         annotations:
           summary: "Keepalived child process died and was respawned"
           description: >
-            A keepalived child process died and the parent respawned it. The
-            VRRP child owns the virtual IPs, so they moved off this node and
-            back, stranding every long-lived connection through it. The
-            container healthcheck cannot see this: the parent survives. Check
-            the log lines just before this one for the child's exit status.
+            A keepalived child process died and the parent respawned it; the log
+            line names which child. For the VRRP child, it owns the virtual IPs,
+            so they moved off this node and back, stranding every long-lived
+            connection through it. For the Healthcheck child, the VIPs stay put
+            and only LVS real-server checking paused. The container healthcheck
+            cannot see either case: the parent survives. Check the log lines just
+            before this one for the child's exit status.
       - alert: KeepalivedMemlockFailed
         expr: |
           sum by (hostname) (count_over_time({container="keepalived"} |= "Unable to lock process in memory" [15m])) > 0
@@ -96,8 +106,8 @@ groups:
         annotations:
           summary: "Keepalived could not lock memory (vrrp_no_swap inert)"
           description: >
-            keepalived's config asks for vrrp_no_swap (or checker_no_swap /
-            bfd_no_swap) but mlockall failed, so the option is inert for the
+            keepalived's config asks for vrrp_no_swap (or checker_no_swap) but
+            mlockall failed, so the option is inert for the
             life of this process and the child can be swapped out. keepalived
             appends the errno to that log line: read it, then check both the
             container's locked-memory limit (RLIMIT_MEMLOCK, see README

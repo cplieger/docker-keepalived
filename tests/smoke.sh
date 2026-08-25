@@ -54,6 +54,23 @@ for feat in NFTABLES JSON; do
   fi
 done
 
+# The published operator prose is scoped to the features this build compiles:
+# alerts.yaml and the README name vrrp_no_swap and checker_no_swap and no BFD
+# directive, because --enable-bfd is opt-in and the configure line passes
+# --disable-bfd. A configure default that flipped upstream would make that
+# prose incomplete with no human in the loop, so assert the absence the way
+# section 1 asserts the presences.
+# Keep this match case-SENSITIVE and word-bounded. $ver holds the whole
+# --version output, whose first section is the literal configure command
+# line, and that line now contains --disable-bfd: `grep -qiw bfd` would
+# match it and fail every build. Red-checked with a stubbed
+# `keepalived --version` on PATH — BFD in the Config options line fails,
+# --disable-bfd on the configure options line does not.
+if printf '%s\n' "$ver" | grep -qw BFD; then
+  err "FAIL: build gained BFD support — alerts.yaml and README.md name no BFD directive"
+  fail=1
+fi
+
 # 1c. genhash mode: the shipped /usr/bin/genhash must actually run keepalived's
 #     genhash, which is a compile-time-conditional argv[0] dispatch (_WITH_LVS_),
 #     not a property of the symlink. Gated like 1a/3: it reads the image filesystem.
@@ -139,15 +156,13 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
       err "FAIL: embedded SBOM fragment version is not v${expected} (ARG wiring broken?)"
       fail=1
     }
-    # The download_url is asserted literally (it derives from the same ARG
-    # by construction, Dockerfile:32); the checksum by shape only, because
-    # a wrong sha already fails the build at Dockerfile:35's sha256sum -c.
-    purl_prefix="pkg:generic/keepalived@${expected}?download_url=https://www.keepalived.org/software/keepalived-${expected}.tar.gz&checksum=sha256:"
-    jq -e --arg want "$purl_prefix" \
-      '.components[0].purl as $p
-       | ($p | startswith($want))
-         and ($p[($want | length):] | test("^[0-9a-f]{64}$"))' "$sbom" >/dev/null || {
-      err "FAIL: embedded SBOM fragment purl is not ${purl_prefix}<64 hex> (provenance lost?)"
+    # The purl is asserted whole: both provenance qualifiers interpolate the
+    # same build ARGs the test stage passes in, so a hand-edited literal in
+    # the Dockerfile's heredoc cannot outlive a version or checksum bump
+    # unnoticed.
+    purl="pkg:generic/keepalived@${expected}?download_url=https://www.keepalived.org/software/keepalived-${expected}.tar.gz&checksum=sha256:${KEEPALIVED_EXPECTED_SHA256:-}"
+    jq -e --arg want "$purl" '.components[0].purl == $want' "$sbom" >/dev/null || {
+      err "FAIL: embedded SBOM fragment purl is not ${purl} (provenance lost?)"
       fail=1
     }
     jq -e --arg want "cpe:2.3:a:keepalived:keepalived:${expected}:*:*:*:*:*:*:*" \
@@ -194,6 +209,7 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
     '- disabling' \
     'Disabling track script' \
     'Non-existent interface specified in configuration' \
+    'has no configuration to run' \
     'died: Respawning' \
     'Unable to lock process in memory'; do
     if ! tr '\0' '\n' </usr/sbin/keepalived | grep -qF -- "$lit"; then

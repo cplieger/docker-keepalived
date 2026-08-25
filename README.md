@@ -134,7 +134,7 @@ VRRP multicast addresses (RFC 5798): `224.0.0.18` (IPv4), `ff02::12` (IPv6). `NE
 
 ### Resource limits
 
-The image needs no resource limits to run, with one exception. If your `keepalived.conf` sets `vrrp_no_swap` (or `checker_no_swap` / `bfd_no_swap`), raise the container's locked-memory limit too, or the option will not do what it says.
+The image needs no resource limits to run, with one exception. If your `keepalived.conf` sets `vrrp_no_swap` (or `checker_no_swap`), raise the container's locked-memory limit too, or the option will not do what it says.
 
 Those options make the child process call `mlockall()`, and `RLIMIT_MEMLOCK` is charged against locked _address space_, not resident memory. A container that sets no `ulimits:` inherits the Docker daemon's own limit, which on a systemd host is 8 MiB unless the daemon's unit says otherwise. This image's VRRP child maps about 7.4 MiB of program text and shared libraries before its first allocation (OpenSSL's libcrypto is 4.8 MiB of that, amd64), so 8 MiB leaves it almost no room — and 64 KiB, the kernel default on hosts with no systemd bump, leaves it none at all.
 
@@ -170,8 +170,8 @@ keepalived logs VRRP state transitions and config events to its container log (t
 | --- | --- | --- |
 | `KeepalivedTrackScriptFailed` | a VRRP track script reports failed or times out (failover imminent) | critical |
 | `KeepalivedFaultState` | a VRRP instance enters FAULT state and drops out of the election | critical |
-| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy: an unknown keyword, a `(Line N)`-prefixed parse error, a config file it could not open or read, a track or notify script it refused to run, an interface that does not exist on the host, or an instance disabled by a config fault | warning |
-| `KeepalivedChildRespawned` | a keepalived child process died and was respawned, moving the VIPs off this node and back | warning |
+| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy: an unknown keyword, a `(Line N)`-prefixed parse error, a config file it could not open or read, a track or notify script it refused to run, an interface that does not exist on the host, an instance disabled by a config fault, or a config that declared nothing to run | warning |
+| `KeepalivedChildRespawned` | a keepalived child process died and was respawned (the log line names which child) | warning |
 | `KeepalivedMemlockFailed` | `mlockall` failed, so `vrrp_no_swap` is inert and the VRRP child can be swapped out | warning |
 
 Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses. These rules cover what a still-running node reports about itself. They do not cover a completed takeover: when a master node dies outright it logs nothing and the survivor logs only `Entering MASTER STATE`, which every legitimate boot election logs too — deciding whether a given node holding MASTER is wrong needs your topology, so a rule for it belongs in your own rule set alongside these.
