@@ -12,6 +12,7 @@ services:
       - NET_RAW
 
     # If the conf sets enable_script_security, the mount must be root-owned and not group- or
-    # world-writable, else the scripts are silently disabled. See README "enable_script_security".
+    # world-writable, else keepalived logs "Unsafe permissions found" and disables the scripts.
+    # See README "enable_script_security".
     volumes:
       - "./keepalived:/etc/keepalived:ro"

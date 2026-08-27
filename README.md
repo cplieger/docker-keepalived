@@ -85,7 +85,7 @@ The backup node uses the same config with `state BACKUP`, `priority 100`, and th
 
 ## ⚠️ enable_script_security and bind-mount permissions
 
-If your `keepalived.conf` sets `enable_script_security` in `global_defs` (recommended), keepalived **refuses to execute scripts whose path inside the container has any non-root-writable component**. Track scripts get silently disabled with this log line:
+If your `keepalived.conf` sets `enable_script_security` in `global_defs` (recommended), keepalived **refuses to execute scripts whose path inside the container has any non-root-writable component**. It disables the track script and names it in the log:
 
 ```text
 Unsafe permissions found for script '/etc/keepalived/scripts/check_app.sh' - disabling.
@@ -160,7 +160,9 @@ Sizing caveat: keepalived's interface table gains an entry per interface the hos
 
 ## Healthcheck
 
-The built-in healthcheck runs `pidof keepalived` every 30s (5s timeout, 3 retries, 15s start period). It catches a crashed process but not a stuck VRRP. The image runs `keepalived --dont-fork --log-console --log-detail`, so every VRRP state transition, track-script success/failure line, and the `Unsafe permissions found ... - disabling` warning lands in `docker logs keepalived` (and any log shipper scraping it); watch there for what the `pidof` probe cannot see. `SIGUSR2` triggers a stats dump to `/tmp/keepalived.stats`.
+The built-in healthcheck runs `pidof keepalived` every 30s (5s timeout, 3 retries, 15s start period). It catches a crashed process but not a stuck VRRP. The image runs `keepalived --dont-fork --log-console --log-detail`, so every VRRP state transition, track-script success/failure line, and the `Unsafe permissions found ... - disabling` warning lands in `docker logs keepalived` (and any log shipper scraping it); watch there for what the `pidof` probe cannot see.
+
+Three signals write a dump under `/tmp`, and the state is in two of them. `SIGUSR1` writes `keepalived.data`, with a `State = MASTER|BACKUP|FAULT` line for each instance. `SIGRTMIN+2` writes `keepalived.json`, with `state` and `wantstate` as numbers. `SIGUSR2` writes `keepalived.stats`, which holds counters only (adverts, master transitions, packet and authentication errors) and no state field. `SIGRTMIN` depends on the C library, and in this image it is 35, so the JSON dump is `docker kill -s 37 keepalived`. Read a dump with `docker exec keepalived cat /tmp/keepalived.data`.
 
 ## Alerting
 
@@ -170,11 +172,17 @@ keepalived logs VRRP state transitions and config events to its container log (t
 | --- | --- | --- |
 | `KeepalivedTrackScriptFailed` | a VRRP track script reports failed or times out (failover imminent) | critical |
 | `KeepalivedFaultState` | a VRRP instance enters FAULT state and drops out of the election | critical |
-| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy: an unknown keyword, a `(Line N)`-prefixed parse error, a config file it could not open or read or skipped as executable, a track or notify script it refused to run, an interface that does not exist on the host, an instance disabled by a config fault, or a config that declared nothing to run | warning |
+| `KeepalivedDuplicateMaster` | two nodes claim the same VRRP address: an address-owner conflict, an advert carrying this node's own IP, or repeated lower-priority adverts | critical |
+| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy and keeps running: an unknown keyword, a `(Line N)`-prefixed parse error, a config file it could not open or read or skipped as executable, a track or notify script it refused to run, an instance disabled by a config fault, or a config that declared nothing to run | warning |
+| `KeepalivedPermanentError` | a keepalived child ends with a permanent error (a missing interface, a duplicate `virtual_router_id`) and the parent terminates, so the container crash-loops | critical |
 | `KeepalivedChildRespawned` | a keepalived child process died and was respawned (the log line names which child) | warning |
 | `KeepalivedMemlockFailed` | `mlockall` failed, so `vrrp_no_swap` is inert and the VRRP child can be swapped out | warning |
 
-Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses. These rules cover what a still-running node reports about itself. They do not cover a completed takeover: when a master node dies outright it logs nothing and the survivor logs only `Entering MASTER STATE`, which every legitimate boot election logs too — deciding whether a given node holding MASTER is wrong needs your topology, so a rule for it belongs in your own rule set alongside these.
+Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses.
+
+These rules read what keepalived reports about itself, and a completed takeover is in that report. The node that stops logs `(NAME) sent 0 priority`. The survivor logs `(NAME) Backup received priority 0 advertisement` before `Entering MASTER STATE`. A master that loses an election while alive logs `Master received advert from <peer> with higher priority P, ours Q`, or `... with same priority P but higher IP address than ours`. The image passes `--log-detail`, which the two priority-0 lines need, so every line above is in `docker logs keepalived` already.
+
+Only a node that dies outright is silent. The survivor then logs `Entering MASTER STATE` and nothing else, which every boot election logs too, so a rule for that case has to know which node should hold the VIP. That decision is yours, and the rule belongs in your own rule set alongside these.
 
 ## Reload without restart
 
@@ -198,7 +206,7 @@ The container root filesystem stays writable, so `read_only: true` is not free. 
       - /run:size=1m
 ```
 
-`/tmp` is a separate question. The `SIGUSR2` stats dump writes `/tmp/keepalived.stats`. On a read-only root that dump logs `Can't open /tmp/keepalived.stats` and keepalived continues. Add a second tmpfs at `/tmp` only if you use the dump.
+`/tmp` is a separate question. The three signal dumps write there (see [Healthcheck](#healthcheck)). On a read-only root a dump logs that it cannot open its file, such as `Can't open /tmp/keepalived.stats`, and keepalived continues. Add a second tmpfs at `/tmp` only if you use the dumps.
 
 The image is published with [cosign](https://github.com/sigstore/cosign) signatures and SBOM attestations. Verify a pull:
 
