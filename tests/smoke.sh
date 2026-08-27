@@ -200,6 +200,10 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
     'Entering FAULT STATE' \
     'entering FAULT state' \
     'leaving FAULT state' \
+    'are both configured as address owner, please resolve' \
+    'is still advertising as address owner, please resolve' \
+    'equal priority advert received from remote host with our IP address' \
+    'with lower priority %d, ours %d' \
     "Unknown keyword '" \
     'Line %zu)' \
     'Unable to read configuration file' \
@@ -208,8 +212,9 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
     "Configuration file '" \
     '- disabling' \
     'Disabling track script' \
-    'Non-existent interface specified in configuration' \
     'has no configuration to run' \
+    'exited with permanent error' \
+    'Non-existent interface specified in configuration' \
     'died: Respawning' \
     'Unable to lock process in memory'; do
     if ! tr '\0' '\n' </usr/sbin/keepalived | grep -qF -- "$lit"; then

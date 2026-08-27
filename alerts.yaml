@@ -5,11 +5,11 @@
 # selectors to your deployment.
 #
 # Each matcher keys on wording from a format string in the pinned keepalived
-# release, but three do so through a regex rather than a plain substring:
+# release, but five do so through a regex rather than a plain substring:
 # TrackScriptFailed binds the status word to its own field with a word
-# boundary, FaultState spans two upstream casings, ConfigError alternates
-# over several patterns. Read a matcher edit for regex semantics as well as
-# for wording drift.
+# boundary, FaultState spans two upstream casings, and DuplicateMaster,
+# ConfigError and PermanentError each alternate over several patterns. Read
+# a matcher edit for regex semantics as well as for wording drift.
 # tests/smoke.sh section 4 anchors the discriminating literals in the shipped
 # binary; keep the two in step. It cannot anchor the bare status word
 # 'failed' - upstream stores it separately from the format string it lands
@@ -51,6 +51,32 @@ groups:
             process, the tracked interface going down, or no usable address
             on it. Check the log lines just before this one for which one it
             was.
+      - alert: KeepalivedDuplicateMaster
+        expr: |
+          sum by (hostname) (count_over_time(
+            {container="keepalived"}
+            |~ "please resolve|equal priority advert received from remote host with our IP address" [15m]
+          )) > 0
+          or sum by (hostname) (count_over_time(
+            {container="keepalived"} |~ "with lower priority [0-9]+, ours" [15m]
+          )) > 5
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Keepalived duplicate master detected"
+          description: >
+            Two nodes hold the same VRRP address at the same time, so traffic
+            to the VIP splits between them. keepalived detects this per node
+            and names the offending peer. An address-owner conflict logs
+            "CONFIGURATION ERROR ... please resolve". An advert that arrives
+            carrying this node's own address logs an equal-priority advert
+            from a remote host with our IP address. A master that keeps
+            receiving lower-priority adverts logs one line for each advert,
+            which is why that leg needs more than 5 lines in 15m: one or two
+            also arrive during a legitimate failback. Check auth_pass,
+            virtual_router_id, and whether multicast passes in both
+            directions.
       - alert: KeepalivedConfigError
         expr: |
           sum by (hostname) (count_over_time(
@@ -59,7 +85,7 @@ groups:
           )) > 0
           or sum by (hostname) (count_over_time(
             {container="keepalived"}
-            |~ "- disabling|Disabling track script|Non-existent interface specified in configuration|has no configuration to run" [15m]
+            |~ "- disabling|Disabling track script|has no configuration to run" [15m]
           )) > 0
         for: 0m
         labels:
@@ -67,20 +93,43 @@ groups:
         annotations:
           summary: "Keepalived config error"
           description: >
-            keepalived logged a config error after a (re)deploy: an unknown
-            keyword (directive silently ignored), a "(Line N)"-prefixed
-            parse error such as an invalid directive value, a config file
-            it could not open or read, a track or notify script keepalived
-            refused to run (unsafe path permissions or ownership, not
-            executable, or not found), an interface named in the config
-            that does not exist on the host, or a VRRP instance disabled
-            by a config fault such as an interface that cannot do
-            multicast, or a config that parsed but declared no VRRP
-            instance or LVS virtual server at all — the daemon then runs
+            keepalived logged a config error after a (re)deploy and kept
+            running with it: an unknown keyword (directive silently
+            ignored), a "(Line N)"-prefixed parse error such as an invalid
+            directive value, a config file it could not open or read, a
+            track or notify script keepalived refused to run (unsafe path
+            permissions or ownership, not executable, or not found), a VRRP
+            instance disabled by a config fault such as an interface that
+            cannot do multicast, or a config that parsed but declared no
+            VRRP instance or LVS virtual server at all. The daemon then runs
             with nothing to do and the container healthcheck still reports
             healthy. Review your keepalived.conf. A refused track script
-            means this node will never fail over on that check — see
-            README "enable_script_security".
+            means this node will never fail over on that check, so see
+            README "enable_script_security". A config fault the daemon
+            refuses OUTRIGHT is KeepalivedPermanentError instead.
+      - alert: KeepalivedPermanentError
+        expr: |
+          sum by (hostname) (count_over_time(
+            {container="keepalived"}
+            |~ "exited with permanent error|Non-existent interface specified in configuration" [15m]
+          )) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Keepalived hit a permanent error and terminated"
+          description: >
+            A keepalived child ended with a permanent error, so the parent
+            logged "exited with permanent error CONFIG" (also FATAL, or
+            missing permission) and terminated too. The container exits and
+            the restart policy crash-loops it, so this node holds no VIP at
+            all. That one line covers the whole class: an interface named in
+            the config that does not exist on the host, two VRRP instances
+            that share a virtual_router_id on one interface, and any other
+            config the daemon refuses outright. KeepalivedChildRespawned
+            cannot fire for these, because the parent terminates instead of
+            respawning the child. Read the error logged just before the
+            terminal line for the cause.
       - alert: KeepalivedChildRespawned
         expr: |
           sum by (hostname) (count_over_time({container="keepalived"} |= "died: Respawning" [15m])) > 0
