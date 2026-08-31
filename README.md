@@ -7,6 +7,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/docker-keepalived/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/docker-keepalived)
 [![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/docker-keepalived/releases)
 
+<!-- hub-overview BEGIN -->
 Run [keepalived](https://www.keepalived.org/) (VRRP failover / high availability) in a container. Bring your own `keepalived.conf`.
 
 ## What it does
@@ -20,6 +21,7 @@ This image is a minimal Alpine wrapper around upstream `keepalived`, compiled fr
 - **Generic upstream-only**: no custom track scripts baked in, so the image works for any VRRP topology without inheriting someone else's check logic
 - **Bind-mount only**: all configuration arrives through one read-only `:ro` mount of `/etc/keepalived`, and the published example adds no writable bind mounts
 - **No PID 1 wrapper**: `keepalived --dont-fork` runs as PID 1 directly, so SIGTERM from `docker stop` reaches it instantly
+<!-- hub-overview END -->
 
 ## Quick start
 
