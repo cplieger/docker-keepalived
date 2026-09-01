@@ -131,13 +131,16 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
     "Configuration file '" \
     '- disabling' \
     'Disabling track script' \
+    'Wrong file type found in script path' \
+    'cannot be accessed - ' \
     'specify unicast peers' \
     'at a reload - please restart' \
+    'auth_hmac active_key' \
     'invalid passwd from' \
     'Invalid auth type from' \
     'auth from %s, expecting' \
     'wrong VRRP version from' \
-    'advertisement interval mismatch' \
+    'advertisement interval mismatch with' \
     'icast packet but received' \
     'authentication trailer from' \
     'invalid authentication HMAC from' \

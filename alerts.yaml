@@ -62,7 +62,7 @@ groups:
           )) > 5
           or sum by (hostname) (count_over_time(
             {container="keepalived"}
-            |~ "invalid passwd|Invalid auth type|[0-9]+ auth from|wrong VRRP version|interval mismatch|icast packet but received" [15m]
+            |~ "invalid passwd|Invalid auth type|[0-9]+ auth from|wrong VRRP version|interval mismatch with|icast packet but received" [15m]
           )) > 0
           or sum by (hostname) (count_over_time(
             {container="keepalived"}
@@ -89,26 +89,34 @@ groups:
             whether multicast passes in both directions. A peer whose adverts
             this node REJECTS produces the same two masters with none of the
             lines above, because every rejection returns before them.
-            keepalived names the reason once per cause - an auth password or
-            auth type mismatch, a wrong VRRP version, a VRRPv2 advertisement
-            interval mismatch, or unicast adverts on a multicast instance and
-            vice versa - and not again until the instance changes state, so
-            that leg reports the ONSET of the fault rather than the standing
-            fault. One line it matches is a warning rather than a rejection: a
-            VRRPv3 advert interval mismatch is logged and the advert is still
-            accepted (RFC 5798 makes that check SHOULD, not MUST), so on a v3
-            pair it means a misconfiguration to fix, not a split brain. Two
-            causes never reach this rule at all: a virtual_router_id mismatch
-            logs nothing unless global_defs sets log_unknown_vrids, and a
-            mismatched virtual_ipaddress set is logged without rejecting the
-            advert. A third family of rejections never reaches the advert's
-            fields at all, and the fourth leg reports it: with `auth_hmac`
-            configured, a missing, malformed, stale or replayed authentication
-            trailer, an unknown key id or a bad HMAC is refused before any
-            field is read - a clock skewed past `time_window` is enough - and
-            so is an advert from an address that is not in this instance's
-            `unicast_peer` list, or one whose TTL or hop limit falls outside
-            the `min_ttl`/`max_ttl` range set for its peer. One arm of that leg
+            keepalived names the reason once per cause - an auth password
+            mismatch, an auth type mismatch where neither side is AH, a wrong
+            VRRP version, a VRRPv2 advertisement interval mismatch, or unicast
+            adverts on a multicast instance and vice versa - and not again
+            until the instance changes state, so that leg reports the ONSET of
+            the fault rather than the standing fault. Five causes never reach
+            this rule at all: a virtual_router_id mismatch logs nothing unless
+            global_defs sets log_unknown_vrids; a mismatched virtual_ipaddress
+            set is logged without rejecting the advert; an auth_type mismatch
+            where one side uses AH changes the IP protocol number of the
+            adverts, so neither node receives the other's or logs a reason; an
+            address owner running owner_ignore_adverts drops every advert before
+            the address-owner lines above and logs only "Dropping packet(s) ...
+            since we are address owner"; and a checksum rejection, which one
+            node holding v3_checksum_as_v2 or unicast_chksum_compat and its peer
+            not is enough to produce. The checksum line stays unmatched because
+            a single corrupted advert on the wire produces the same "Invalid
+            VRRPv2 checksum" or "Invalid VRRPv3 checksum" line, so matching it
+            would page critical for one bad packet. A third family of rejections
+            never reaches the advert's fields at all, and the fourth leg reports
+            it. With `auth_hmac` configured, a missing, malformed, stale or
+            replayed authentication trailer, an unknown key id or a bad HMAC is
+            refused before any field is read - a clock skewed past `time_window`
+            is enough. With `check_unicast_src` set, or a `min_ttl`/`max_ttl` on
+            a `unicast_peer` line, which sets it, an advert from an address that
+            is not in this instance's `unicast_peer` list is refused, and so is
+            one whose TTL or hop limit falls outside that peer's
+            `min_ttl`/`max_ttl` range. One arm of that leg
             is not a misconfiguration: a multicast advert whose TTL is not 255
             was routed or forged, so a match there with none of the config
             causes above points at the network rather than at either
@@ -121,7 +129,7 @@ groups:
           )) > 0
           or sum by (hostname) (count_over_time(
             {container="keepalived"}
-            |~ "specify unicast peers|has no configuration to run|at a reload - please restart" [15m]
+            |~ "specify unicast peers|has no configuration to run|at a reload - please restart|auth_hmac active_key" [15m]
           )) > 0
         for: 0m
         labels:
@@ -138,19 +146,22 @@ groups:
             parsed but declared no VRRP instance or LVS virtual server at all,
             or a reload it refused outright ("Cannot change ... at a reload -
             please restart keepalived"), which leaves every edit in that file
-            unapplied while the old config keeps serving. Review your
-            keepalived.conf. Two arms mean the opposite at container START: a
-            main config keepalived cannot read, find or open, or skips as not a
-            regular non-executable file, makes it exit before any child starts,
-            so the container crash-loops, the pidof healthcheck never reports
-            healthy, and KeepalivedPermanentError stays silent because no child
-            died. Those same lines mean the daemon carried on when the file was
-            an include re-read instead. A script keepalived will not run is
+            unapplied while the old config keeps serving, or an auth_hmac
+            active_key that names no defined key (keepalived drops the whole
+            authentication extension and the instance runs unauthenticated, so
+            the DuplicateMaster authentication leg cannot report for it).
+            Review your keepalived.conf. Two arms mean the opposite at container
+            START: a main config keepalived cannot read, find or open, or skips as
+            not a regular non-executable file, makes it exit before any child
+            starts, so the container crash-loops, the pidof healthcheck never
+            reports healthy, and KeepalivedPermanentError stays silent because no
+            child died. Those same lines mean the daemon carried on when the file
+            was an include re-read instead. A script keepalived will not run is
             KeepalivedScriptDisabled; a config fault that terminates a started
             child is KeepalivedPermanentError.
       - alert: KeepalivedScriptDisabled
         expr: |
-          sum by (hostname) (count_over_time({container="keepalived"} |~ "script.*- disabling|Disabling track script" [15m])) > 0
+          sum by (hostname) (count_over_time({container="keepalived"} |~ "script.*- disabling|Disabling track script|Wrong file type found in script path|cannot be accessed - " [15m])) > 0
         for: 0m
         labels:
           severity: critical
