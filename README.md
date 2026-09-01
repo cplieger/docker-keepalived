@@ -109,7 +109,7 @@ chmod 644 /path/to/keepalived/keepalived.conf
 find /path/to/keepalived/scripts -type f -exec chmod 755 {} +
 ```
 
-If you don't use `enable_script_security`, the script-permission rules above do not apply, but you should use it. One check applies either way: keepalived skips any config file that is not a regular file or has an execute bit set (`Configuration file '...' is not a regular non-executable file - skipping`), and then starts with nothing to run while the `pidof` healthcheck still reports healthy — so keep `keepalived.conf` mode 644, whatever else you set.
+If you don't use `enable_script_security`, the script-permission rules above do not apply, but you should use it. One check applies either way: keepalived will not use a config file that is not a regular file or has an execute bit set (`Configuration file '...' is not a regular non-executable file - skipping`). For your mounted `keepalived.conf`, that is fatal at startup: keepalived exits before starting VRRP and the restart policy crash-loops the container. `KeepalivedPermanentError` stays silent because no child process died. Keep `keepalived.conf` mode 644, whatever else you set. The same line means the daemon carried on when the skipped file was an `include`d one rather than the main config.
 
 ## Configuration reference
 
@@ -174,8 +174,9 @@ keepalived logs VRRP state transitions and config events to its container log (t
 | --- | --- | --- |
 | `KeepalivedTrackScriptFailed` | a VRRP track script reports failed or times out (failover imminent) | critical |
 | `KeepalivedFaultState` | a VRRP instance enters FAULT state and drops out of the election | critical |
-| `KeepalivedDuplicateMaster` | two nodes claim the same VRRP address: an address-owner conflict, an advert carrying this node's own IP, or repeated lower-priority adverts | critical |
-| `KeepalivedConfigError` | keepalived logs a config error after a (re)deploy and keeps running: an unknown keyword, a `(Line N)`-prefixed parse error, a config file it could not open or read or skipped as executable, a track or notify script it refused to run, an instance disabled by a config fault, or a config that declared nothing to run | warning |
+| `KeepalivedDuplicateMaster` | two nodes claim the same VRRP address: an address-owner conflict, an advert carrying this node's own IP, repeated lower-priority adverts, or a peer whose adverts this node rejects outright (an auth password mismatch, an auth type mismatch where neither side is AH, a wrong VRRP version, a VRRPv2 advert-interval mismatch, unicast adverts on a multicast instance or vice versa, a missing or invalid authentication extension, an address outside the `unicast_peer` list, or a TTL or hop-limit failure) | critical |
+| `KeepalivedConfigError` | keepalived logged a config error and kept running with it: an unknown keyword, a `(Line N)`-prefixed parse error, an instance disabled by a config fault, a config that declared nothing to run, an `auth_hmac` `active_key` that names no defined key, so the instance runs unauthenticated, or a reload it refused outright so none of your edits applied. A config file it could not open, read, find, or use as a regular non-executable file has the opposite meaning at container start: keepalived exits and the container crash-loops | warning |
+| `KeepalivedScriptDisabled` | keepalived refused to run a track or notify script and disabled it: a refused track script means this node never fails over on that check; a refused notify script means the side effect of a state change never runs. The container stays healthy in both cases | critical |
 | `KeepalivedPermanentError` | a keepalived child ends with a permanent error (a missing interface, a duplicate `virtual_router_id`) and the parent terminates, so the container crash-loops | critical |
 | `KeepalivedChildRespawned` | a keepalived child process died and was respawned (the log line names which child) | warning |
 | `KeepalivedMemlockFailed` | `mlockall` failed, so `vrrp_no_swap` is inert and the VRRP child can be swapped out | warning |
@@ -194,7 +195,7 @@ To apply a config change without a container restart (no VIP transition):
 docker kill -s HUP keepalived
 ```
 
-keepalived re-reads `keepalived.conf` and applies any changes. VRRP state is preserved for unchanged instances; only changed instances briefly renegotiate.
+keepalived re-reads `keepalived.conf` and applies any changes. VRRP state is preserved for unchanged instances, and only changed instances briefly renegotiate. Seven settings cannot be changed this way: the top-level `net_namespace`, `net_namespace_ipvs` and `instance`, and the `global_defs` entries `nftables`, `nftables_ipvs`, `tmp_config_directory` and `disable_local_igmp`. keepalived logs `Cannot change ... at a reload - please restart keepalived`; it names its own internal field rather than the directive, so the log text and the spelling you wrote will differ. It then keeps the old configuration and never signals its VRRP child, so every other edit in the file is discarded too. That needs a `docker restart`, and the `KeepalivedConfigError` rule in [`alerts.yaml`](alerts.yaml) catches it.
 
 ## Security
 
