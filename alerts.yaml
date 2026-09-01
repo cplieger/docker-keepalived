@@ -5,13 +5,13 @@
 # selectors to your deployment.
 #
 # Each matcher keys on wording from a format string in the pinned keepalived
-# release, but five do so through a regex rather than a plain substring:
+# release, but six do so through a regex rather than a plain substring:
 # TrackScriptFailed binds the status word to its own field with a word
 # boundary, FaultState spans two upstream casings, and DuplicateMaster,
-# ConfigError and PermanentError each alternate over several patterns. Read
-# a matcher edit for regex semantics as well as for wording drift.
-# tests/smoke.sh section 4 anchors the discriminating literals in the shipped
-# binary; keep the two in step. It cannot anchor the bare status word
+# ConfigError, PermanentError and ScriptDisabled each alternate over several
+# patterns. Read a matcher edit for regex semantics as well as for wording drift.
+# tests/smoke.sh's alert-anchor loop asserts the discriminating literals against
+# the shipped binary; keep the two in step. It cannot anchor the bare status word
 # 'failed' - upstream stores it separately from the format string it lands
 # in, and the binary carries unrelated strings containing it, so a grep for
 # it could never fail. That one word is ungated: re-read it against the
@@ -58,8 +58,16 @@ groups:
             |~ "please resolve|equal priority advert received from remote host with our IP address" [15m]
           )) > 0
           or sum by (hostname) (count_over_time(
-            {container="keepalived"} |~ "with lower priority [0-9]+, ours" [15m]
+            {container="keepalived"} |~ "with lower priority [0-9]+, ours" [30m]
           )) > 5
+          or sum by (hostname) (count_over_time(
+            {container="keepalived"}
+            |~ "invalid passwd|Invalid auth type|[0-9]+ auth from|wrong VRRP version|interval mismatch|icast packet but received" [15m]
+          )) > 0
+          or sum by (hostname) (count_over_time(
+            {container="keepalived"}
+            |~ "authentication (trailer|HMAC|key id)|not a unicast peer|TTL/HL" [15m]
+          )) > 0
         for: 0m
         labels:
           severity: critical
@@ -72,11 +80,39 @@ groups:
             "CONFIGURATION ERROR ... please resolve". An advert that arrives
             carrying this node's own address logs an equal-priority advert
             from a remote host with our IP address. A master that keeps
-            receiving lower-priority adverts logs one line for each advert,
-            which is why that leg needs more than 5 lines in 15m: one or two
-            also arrive during a legitimate failback. Check auth_pass,
-            virtual_router_id, and whether multicast passes in both
-            directions.
+            receiving lower-priority adverts logs one line per advert, which
+            is why that leg needs more than 5 lines in 30m: one or two also
+            arrive during a legitimate failback. That count assumes a short
+            advert_int; at the accepted maximum of 255s, 30m carries only
+            about seven adverts, so raise the window or lower the threshold if
+            your advert_int is long. Check auth_pass, virtual_router_id, and
+            whether multicast passes in both directions. A peer whose adverts
+            this node REJECTS produces the same two masters with none of the
+            lines above, because every rejection returns before them.
+            keepalived names the reason once per cause - an auth password or
+            auth type mismatch, a wrong VRRP version, a VRRPv2 advertisement
+            interval mismatch, or unicast adverts on a multicast instance and
+            vice versa - and not again until the instance changes state, so
+            that leg reports the ONSET of the fault rather than the standing
+            fault. One line it matches is a warning rather than a rejection: a
+            VRRPv3 advert interval mismatch is logged and the advert is still
+            accepted (RFC 5798 makes that check SHOULD, not MUST), so on a v3
+            pair it means a misconfiguration to fix, not a split brain. Two
+            causes never reach this rule at all: a virtual_router_id mismatch
+            logs nothing unless global_defs sets log_unknown_vrids, and a
+            mismatched virtual_ipaddress set is logged without rejecting the
+            advert. A third family of rejections never reaches the advert's
+            fields at all, and the fourth leg reports it: with `auth_hmac`
+            configured, a missing, malformed, stale or replayed authentication
+            trailer, an unknown key id or a bad HMAC is refused before any
+            field is read - a clock skewed past `time_window` is enough - and
+            so is an advert from an address that is not in this instance's
+            `unicast_peer` list, or one whose TTL or hop limit falls outside
+            the `min_ttl`/`max_ttl` range set for its peer. One arm of that leg
+            is not a misconfiguration: a multicast advert whose TTL is not 255
+            was routed or forged, so a match there with none of the config
+            causes above points at the network rather than at either
+            keepalived.conf.
       - alert: KeepalivedConfigError
         expr: |
           sum by (hostname) (count_over_time(
@@ -85,7 +121,7 @@ groups:
           )) > 0
           or sum by (hostname) (count_over_time(
             {container="keepalived"}
-            |~ "- disabling|Disabling track script|has no configuration to run" [15m]
+            |~ "specify unicast peers|has no configuration to run|at a reload - please restart" [15m]
           )) > 0
         for: 0m
         labels:
@@ -93,20 +129,51 @@ groups:
         annotations:
           summary: "Keepalived config error"
           description: >
-            keepalived logged a config error after a (re)deploy and kept
-            running with it: an unknown keyword (directive silently
-            ignored), a "(Line N)"-prefixed parse error such as an invalid
-            directive value, a config file it could not open or read, a
-            track or notify script keepalived refused to run (unsafe path
-            permissions or ownership, not executable, or not found), a VRRP
-            instance disabled by a config fault such as an interface that
-            cannot do multicast, or a config that parsed but declared no
-            VRRP instance or LVS virtual server at all. The daemon then runs
-            with nothing to do and the container healthcheck still reports
-            healthy. Review your keepalived.conf. A refused track script
-            means this node will never fail over on that check, so see
-            README "enable_script_security". A config fault the daemon
-            refuses OUTRIGHT is KeepalivedPermanentError instead.
+            keepalived logged a config error and kept running with it: an
+            unknown keyword (the directive is silently ignored), a "(Line
+            N)"-prefixed parse error such as an invalid directive value, a
+            config file it could not open, read or find or would not treat as
+            a regular non-executable file, a VRRP instance disabled by a config
+            fault such as an interface that cannot do multicast, a config that
+            parsed but declared no VRRP instance or LVS virtual server at all,
+            or a reload it refused outright ("Cannot change ... at a reload -
+            please restart keepalived"), which leaves every edit in that file
+            unapplied while the old config keeps serving. Review your
+            keepalived.conf. Two arms mean the opposite at container START: a
+            main config keepalived cannot read, find or open, or skips as not a
+            regular non-executable file, makes it exit before any child starts,
+            so the container crash-loops, the pidof healthcheck never reports
+            healthy, and KeepalivedPermanentError stays silent because no child
+            died. Those same lines mean the daemon carried on when the file was
+            an include re-read instead. A script keepalived will not run is
+            KeepalivedScriptDisabled; a config fault that terminates a started
+            child is KeepalivedPermanentError.
+      - alert: KeepalivedScriptDisabled
+        expr: |
+          sum by (hostname) (count_over_time({container="keepalived"} |~ "script.*- disabling|Disabling track script" [15m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Keepalived refused to run a track or notify script"
+          description: >
+            keepalived would not run a script and disabled it. Which failover
+            guarantee that breaks depends on the script's ROLE, and most of the
+            matched lines do not say: the same permission and lookup checks
+            refuse a track_script and a notify_master/backup/fault script
+            alike. Only "Disabling track script" is unambiguous. A refused
+            TRACK script means the object it tracked is never evaluated, so
+            this node's priority never drops and it keeps the VIP through an
+            outage of the very service the script was installed to watch. A
+            refused NOTIFY script means the transition still happens but the
+            side effect the operator attached to it does not - an address or
+            route the new MASTER was supposed to install never appears.
+            Identify the script named in the line before acting. Nothing else
+            reports either state: the daemon runs, VRRP works, and the pidof
+            healthcheck stays green. The usual cause is path permissions under
+            enable_script_security, so see README "enable_script_security"; it
+            also fires for a script keepalived cannot find, cannot execute as
+            its run-as user, or cannot set uid/gid for.
       - alert: KeepalivedPermanentError
         expr: |
           sum by (hostname) (count_over_time(

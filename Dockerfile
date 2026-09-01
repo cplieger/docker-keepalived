@@ -23,17 +23,11 @@ ARG KEEPALIVED_VERSION
 ARG KEEPALIVED_SHA256
 
 WORKDIR /build/keepalived
-# --enable-nftables turns missing nftables headers into a configure error
-# rather than a silent feature drop; missing libnftnl/libmnl only warn, so
-# tests/smoke.sh's Config-options assertion is what catches those.
-# --disable-bfd keeps BFD out by construction: alerts.yaml and README.md are
-# scoped to the directives this build installs, --enable-bfd is opt-in in
-# this release, and a flipped upstream default would otherwise reach the
-# image with no human in the loop. tests/smoke.sh section 1b detects it.
-# Syft's catalogers do not identify this source-built keepalived, so the
-# image carries a CycloneDX fragment for it; the release pipeline's
-# sbom-cataloger discovers the fragment by its .cdx.json suffix, not by
-# this path.
+# Both --enable-nftables and --disable-bfd are explicit on purpose: the
+# first turns missing nftables headers into a configure error, the
+# second pins off an opt-in feature so an upstream default flip cannot
+# arrive with an automerged version bump. tests/smoke.sh asserts both
+# against the built binary.
 RUN url="https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.tar.gz" \
     && tarball="${url##*/}" \
     && curl -fsSL --connect-timeout 10 --max-time 120 --retry 7 --retry-max-time 150 --retry-all-errors -o "$tarball" "$url" \
@@ -52,6 +46,8 @@ RUN url="https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.
         --disable-systemd \
     && make -j"$(nproc)" \
     && install -D -m 755 bin/keepalived /out/usr/sbin/keepalived \
+    # Syft identifies no source-built keepalived; the release pipeline finds
+    # this fragment by its .cdx.json suffix.
     && cat > /out/keepalived.cdx.json <<EOF
 {
   "bomFormat": "CycloneDX",
