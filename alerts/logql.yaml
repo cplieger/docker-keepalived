@@ -24,33 +24,66 @@
 groups:
   - name: keepalived
     rules:
+      # Both state rules below read the LATEST status per object rather than counting
+      # events, because keepalived logs a track script and a VRRP state only on CHANGE.
+      # A count over a window cannot tell "failed and still failing" from "failed and
+      # recovered" — it sees one line either way — so an event-shaped rule pages on every
+      # rolling redeploy of the tracked service. `last_over_time` on a 0/1 label is
+      # order-aware: the recovery line drives the value back to 0 and the alert clears by
+      # itself, and the `for` window is what a genuine outage has to outlive. The lookback
+      # is the rule's MEMORY of the current state, not a detection window, so a long one
+      # costs nothing and only extends how long a real fault keeps paging.
       - alert: KeepalivedTrackScriptFailed
         expr: |
-          sum by (hostname) (count_over_time({container="keepalived"} |= "VRRP_Script(" |~ "VRRP_Script\\(.*\\) (failed|timed_out)\\b" [15m])) > 0
-        for: 0m
+          max by (hostname, script) (
+            last_over_time(
+              {container="keepalived"} |= "VRRP_Script("
+                |~ "VRRP_Script\\(.*\\) (failed|timed_out|succeeded)\\b"
+                | regexp "VRRP_Script\\((?P<script>[^)]+)\\) (?P<vstatus>failed|timed_out|succeeded)"
+                | label_format bad=`{{ if eq .vstatus "succeeded" }}0{{ else }}1{{ end }}`
+                | drop vstatus, detected_level
+                | unwrap bad [6h]
+            )
+          ) > 0
+        for: 3m
         labels:
           severity: critical
         annotations:
-          summary: "Keepalived track script failing"
+          summary: "Keepalived track script {{ $labels.script }} failing"
           description: >
-            A keepalived VRRP track script reported failed or timed out. The
-            monitored service is down or not answering in time, and a VRRP
-            failover is imminent or in progress.
+            Keepalived track script {{ $labels.script }} has been failed or timed out for
+            over 3 minutes with no recovery, so the monitored service is genuinely down
+            rather than restarting, and this node has dropped out of the VRRP election.
+            A recreate of the tracked container recovers in tens of seconds and is
+            deliberately below this threshold — raise `for` if your service starts slower.
       - alert: KeepalivedFaultState
         expr: |
-          sum by (hostname) (count_over_time({container="keepalived"} |~ "(?i)FAULT state" != "leaving FAULT state" [15m])) > 0
-        for: 0m
+          max by (hostname, vrrp_instance) (
+            last_over_time(
+              {container="keepalived"}
+                |~ "(?i)\\(VI_[^)]+\\):? entering (FAULT|BACKUP|MASTER) STATE"
+                | regexp "(?i)\\((?P<vrrp_instance>VI_[^)]+)\\):? entering (?P<vstate>fault|backup|master) state"
+                | label_format faulted=`{{ if eq (lower .vstate) "fault" }}1{{ else }}0{{ end }}`
+                | drop vstate, detected_level
+                | unwrap faulted [6h]
+            )
+          ) > 0
+        for: 3m
         labels:
           severity: critical
         annotations:
-          summary: "Keepalived instance entered FAULT state"
+          summary: "Keepalived instance {{ $labels.vrrp_instance }} stuck in FAULT state"
           description: >
-            A VRRP instance entered FAULT state, so this node dropped out of
-            the VRRP election and the VIP fails over to a backup node. Any
-            tracked object can cause it: a failed track script, file or
-            process, the tracked interface going down, or no usable address
-            on it. Check the log lines just before this one for which one it
-            was.
+            VRRP instance {{ $labels.vrrp_instance }} has been in FAULT state for over 3
+            minutes, so this node is out of the VRRP election and not recovering on its
+            own, and the VIP has failed over to a backup node. Any tracked object can
+            cause it: a failed track script, file or process, the tracked interface going
+            down, or no usable address on it. Check the log lines just before the FAULT
+            for which one it was. Entering BACKUP or MASTER is the recovery, so a brief
+            FAULT during a redeploy resolves itself and does not alert. The matcher is
+            case-insensitive and colon-tolerant on purpose: keepalived spells this
+            "Entering FAULT STATE" for a track-script cause and "entering FAULT state"
+            for an interface, address, tracked-file or tracked-process cause.
       - alert: KeepalivedDuplicateMaster
         expr: |
           sum by (hostname) (count_over_time(

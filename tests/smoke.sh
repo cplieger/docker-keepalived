@@ -116,9 +116,11 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
   for lit in \
     'VRRP_Script(%s) %s' \
     'timed_out' \
+    'succeeded' \
     'Entering FAULT STATE' \
     'entering FAULT state' \
-    'leaving FAULT state' \
+    'Entering BACKUP STATE' \
+    'Entering MASTER STATE' \
     'are both configured as address owner, please resolve' \
     'is still advertising as address owner, please resolve' \
     'equal priority advert received from remote host with our IP address' \
