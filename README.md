@@ -172,8 +172,8 @@ keepalived logs VRRP state transitions and config events to its container log (t
 
 | Alert | Fires when | Severity |
 | --- | --- | --- |
-| `KeepalivedTrackScriptFailed` | a VRRP track script reports failed or times out (failover imminent) | critical |
-| `KeepalivedFaultState` | a VRRP instance enters FAULT state and drops out of the election | critical |
+| `KeepalivedTrackScriptFailed` | a VRRP track script has reported failed or timed out for 3 minutes with no recovery (the rule names the script) | critical |
+| `KeepalivedFaultState` | a VRRP instance has been in FAULT state for 3 minutes and is not rejoining the election (the rule names the instance) | critical |
 | `KeepalivedDuplicateMaster` | two nodes claim the same VRRP address: an address-owner conflict, an advert carrying this node's own IP, repeated lower-priority adverts, or a peer whose adverts this node rejects outright (an auth password mismatch, an auth type mismatch where neither side is AH, a wrong VRRP version, a VRRPv2 advert-interval mismatch, unicast adverts on a multicast instance or vice versa, a missing or invalid authentication extension, an address outside the `unicast_peer` list, or a TTL or hop-limit failure) | critical |
 | `KeepalivedConfigError` | keepalived logged a config error and kept running with it: an unknown keyword, a `(Line N)`-prefixed parse error, an instance disabled by a config fault, a config that declared nothing to run, an `auth_hmac` `active_key` that names no defined key, so the instance runs unauthenticated, or a reload it refused outright so none of your edits applied. A config file it could not open, read, find, or use as a regular non-executable file has the opposite meaning at container start: keepalived exits and the container crash-loops | warning |
 | `KeepalivedScriptDisabled` | keepalived refused to run a track or notify script and disabled it: a refused track script means this node never fails over on that check; a refused notify script means the side effect of a state change never runs. The container stays healthy in both cases | critical |
@@ -181,7 +181,7 @@ keepalived logs VRRP state transitions and config events to its container log (t
 | `KeepalivedChildRespawned` | a keepalived child process died and was respawned (the log line names which child) | warning |
 | `KeepalivedMemlockFailed` | `mlockall` failed, so `vrrp_no_swap` is inert and the VRRP child can be swapped out | warning |
 
-Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses.
+Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses. The two state rules above read the latest status per script and per VRRP instance rather than counting events, so they clear themselves when the recovery line arrives and stay quiet through a restart of a tracked service; raise their `for: 3m` if your tracked service takes longer than that to come back.
 
 These rules read what keepalived reports about itself, and a completed takeover is in that report. The node that stops logs `(NAME) sent 0 priority`. The survivor logs `(NAME) Backup received priority 0 advertisement` before `Entering MASTER STATE`. A master that loses an election while alive logs `Master received advert from <peer> with higher priority P, ours Q`, or `... with same priority P but higher IP address than ours`. The image passes `--log-detail`, which the two priority-0 lines need, so every line above is in `docker logs keepalived` already.
 
