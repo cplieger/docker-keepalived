@@ -31,9 +31,9 @@ for feat in NFTABLES JSON; do
   fi
 done
 
-# BFD must remain absent; alerts.yaml and README.md exclude it.
+# BFD must remain absent; alerts/logql.yaml and README.md exclude it.
 if printf '%s\n' "$ver" | grep -qw BFD; then
-  err "FAIL: build gained BFD support — alerts.yaml and README.md name no BFD directive"
+  err "FAIL: build gained BFD support — alerts/logql.yaml and README.md name no BFD directive"
   fail=1
 fi
 
@@ -155,7 +155,7 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
     'Unable to lock process in memory'; do
     if ! tr '\0' '\n' </usr/sbin/keepalived | grep -qF -- "$lit"; then
       err "FAIL: alert matcher anchor missing from the shipped binary: $lit"
-      err "      re-read alerts.yaml against the keepalived sources for this release"
+      err "      re-read alerts/logql.yaml against the keepalived sources for this release"
       fail=1
     fi
   done

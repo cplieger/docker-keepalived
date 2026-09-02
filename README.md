@@ -149,8 +149,8 @@ Those options make the child process call `mlockall()`, and `RLIMIT_MEMLOCK` is 
 
 Two failure modes, so you can tell them apart in `docker logs`:
 
-- **Limit below the child's virtual size.** `mlockall` fails at startup, keepalived logs `Unable to lock process in memory - Cannot allocate memory` once, and carries on with `vrrp_no_swap` silently inert from then on. The `KeepalivedMemlockFailed` rule in [`alerts.yaml`](alerts.yaml) is what catches it (see [Alerting](#alerting)).
-- **Limit just above it.** The lock succeeds and a later allocation is refused instead: `Keepalived: Resource temporarily unavailable` (no timestamp — it is a `perror`, not a log line), the VRRP child exits 204, and the parent respawns it, which moves the VIP out and back. The `pidof` healthcheck stays green, because the parent is what survives; the `KeepalivedChildRespawned` rule in [`alerts.yaml`](alerts.yaml) is what catches it (see [Alerting](#alerting)). keepalived prints `Please log an issue at ...` for any child death, so that banner is not evidence of an upstream bug.
+- **Limit below the child's virtual size.** `mlockall` fails at startup, keepalived logs `Unable to lock process in memory - Cannot allocate memory` once, and carries on with `vrrp_no_swap` silently inert from then on. The `KeepalivedMemlockFailed` rule in [`alerts/logql.yaml`](alerts/logql.yaml) is what catches it (see [Alerting](#alerting)).
+- **Limit just above it.** The lock succeeds and a later allocation is refused instead: `Keepalived: Resource temporarily unavailable` (no timestamp — it is a `perror`, not a log line), the VRRP child exits 204, and the parent respawns it, which moves the VIP out and back. The `pidof` healthcheck stays green, because the parent is what survives; the `KeepalivedChildRespawned` rule in [`alerts/logql.yaml`](alerts/logql.yaml) is what catches it (see [Alerting](#alerting)). keepalived prints `Please log an issue at ...` for any child death, so that banner is not evidence of an upstream bug.
 
 Check what your host actually granted:
 
@@ -168,7 +168,7 @@ Three signals write a dump under `/tmp`, and the state is in two of them. `SIGUS
 
 ## Alerting
 
-keepalived logs VRRP state transitions and config events to its container log (the same stream the [Healthcheck](#healthcheck) section describes shipping to a log collector). Ship it to Loki and evaluate the rules in [`alerts.yaml`](alerts.yaml) with Loki's ruler; firing alerts deliver through your Alertmanager like any Prometheus alert. They cover:
+keepalived logs VRRP state transitions and config events to its container log (the same stream the [Healthcheck](#healthcheck) section describes shipping to a log collector). Ship it to Loki and evaluate the rules in [`alerts/logql.yaml`](alerts/logql.yaml) with Loki's ruler; firing alerts deliver through your Alertmanager like any Prometheus alert. They cover:
 
 | Alert | Fires when | Severity |
 | --- | --- | --- |
@@ -195,7 +195,7 @@ To apply a config change without a container restart (no VIP transition):
 docker kill -s HUP keepalived
 ```
 
-keepalived re-reads `keepalived.conf` and applies any changes. VRRP state is preserved for unchanged instances, and only changed instances briefly renegotiate. Seven settings cannot be changed this way: the top-level `net_namespace`, `net_namespace_ipvs` and `instance`, and the `global_defs` entries `nftables`, `nftables_ipvs`, `tmp_config_directory` and `disable_local_igmp`. keepalived logs `Cannot change ... at a reload - please restart keepalived`; it names its own internal field rather than the directive, so the log text and the spelling you wrote will differ. It then keeps the old configuration and never signals its VRRP child, so every other edit in the file is discarded too. That needs a `docker restart`, and the `KeepalivedConfigError` rule in [`alerts.yaml`](alerts.yaml) catches it.
+keepalived re-reads `keepalived.conf` and applies any changes. VRRP state is preserved for unchanged instances, and only changed instances briefly renegotiate. Seven settings cannot be changed this way: the top-level `net_namespace`, `net_namespace_ipvs` and `instance`, and the `global_defs` entries `nftables`, `nftables_ipvs`, `tmp_config_directory` and `disable_local_igmp`. keepalived logs `Cannot change ... at a reload - please restart keepalived`; it names its own internal field rather than the directive, so the log text and the spelling you wrote will differ. It then keeps the old configuration and never signals its VRRP child, so every other edit in the file is discarded too. That needs a `docker restart`, and the `KeepalivedConfigError` rule in [`alerts/logql.yaml`](alerts/logql.yaml) catches it.
 
 ## Security
 
