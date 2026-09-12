@@ -5,11 +5,12 @@
 # selectors to your deployment.
 #
 # Each matcher keys on wording from a format string in the pinned keepalived
-# release, but six do so through a regex rather than a plain substring:
+# release, but seven do so through a regex rather than a plain substring:
 # TrackScriptFailed binds the status word to its own field with a word
 # boundary, FaultState spans two upstream casings, and DuplicateMaster,
-# ConfigError, PermanentError and ScriptDisabled each alternate over several
-# patterns. Read a matcher edit for regex semantics as well as for wording drift.
+# ConfigError, PermanentError, ScriptDisabled and ScriptExecFailed each
+# alternate over several patterns. Read a matcher edit for regex semantics as
+# well as for wording drift.
 # tests/smoke.sh's alert-anchor loop asserts the discriminating literals against
 # the shipped binary; keep the two in step. It cannot anchor the bare status word
 # 'failed' - upstream stores it separately from the format string it lands
@@ -218,6 +219,31 @@ groups:
             enable_script_security, so see README "enable_script_security"; it
             also fires for a script keepalived cannot find, cannot execute as
             its run-as user, or cannot set uid/gid for.
+      - alert: KeepalivedScriptExecFailed
+        expr: |
+          sum by (hostname) (count_over_time(
+            {container="keepalived"}
+            |~ "Error exec-ing command|Couldn't (find|execute) command" [15m]
+          )) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Keepalived could not execute a track or notify script"
+          description: >
+            keepalived forked a child for a track or notify script and the exec
+            failed, so the script never ran. The line names the path. Nothing
+            keepalived checks while reading the config can see this one, which
+            is why KeepalivedScriptDisabled does not report it: the path, the
+            owner and the permissions are all in order and the program behind
+            them is not. The two usual causes are a shebang naming an
+            interpreter the image does not ship, and a script on a filesystem
+            mounted noexec. For a TRACK script the consequence is inverted and
+            worse than a refusal: the child exits 0, which keepalived reads as
+            the check succeeding, so it logs VRRP_Script(name) succeeded and
+            this node keeps the VIP through an outage of the very service the
+            script watches. For a NOTIFY script the transition still happens
+            and the side effect attached to it does not.
       - alert: KeepalivedPermanentError
         expr: |
           sum by (hostname) (count_over_time(

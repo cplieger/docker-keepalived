@@ -70,6 +70,84 @@ if bad_out=$(keepalived -t -f "$bad" --log-console --log-detail 2>&1); then
   fail=1
 fi
 
+# A script keepalived cannot execute must be reported. keepalived reports that
+# from a child whose stderr it has already redirected to /dev/null, so under the
+# entrypoint's --dont-fork --log-console the report reaches nothing and a broken
+# track or notify hook has no symptom at all; patches/ keeps a copy of the
+# console for it. A track script drives the failure because it runs as soon as
+# the VRRP child does, needing neither an election nor NET_ADMIN. -t cannot
+# stand in: it exits 0 on a notify script that does not exist.
+if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
+  iface=
+  for n in /sys/class/net/*; do
+    case ${n##*/} in
+      lo | '*') continue ;;
+    esac
+    iface=${n##*/}
+    break
+  done
+  exec_dir=$(mktemp -d /root/smoke-exec.XXXXXX)
+  trap 'rm -f "$conf" "$bad"; rm -rf "$exec_dir"' EXIT
+  exec_script="$exec_dir/hook.sh"
+  exec_conf="$exec_dir/vrrp.conf"
+  exec_log="$exec_dir/keepalived.log"
+  if [ -z "$iface" ]; then
+    err "FAIL: no non-loopback interface, so no VRRP instance can start here"
+    fail=1
+  else
+    # A shebang naming an interpreter the image does not ship passes every
+    # check keepalived makes before the fork and fails at execve. The other
+    # real shape is a noexec mount, which a build stage cannot create.
+    printf '#!/nonexistent/interpreter\n' >"$exec_script"
+    chmod 755 "$exec_dir" "$exec_script"
+    printf '%s\n' \
+      'global_defs {' \
+      '    enable_script_security' \
+      '    script_user root' \
+      '}' \
+      'vrrp_script chk_exec {' \
+      "    script \"$exec_script\"" \
+      '    interval 1' \
+      '    fall 1' \
+      '    rise 1' \
+      '}' \
+      'vrrp_instance VI_EXEC {' \
+      '    state BACKUP' \
+      "    interface $iface" \
+      '    virtual_router_id 253' \
+      '    priority 100' \
+      '    advert_int 1' \
+      '    virtual_ipaddress {' \
+      '        192.168.255.252/24' \
+      '    }' \
+      '    track_script {' \
+      '        chk_exec' \
+      '    }' \
+      '}' >"$exec_conf"
+    chmod 0644 "$exec_conf"
+    keepalived --dont-fork --log-console --log-detail -f "$exec_conf" >"$exec_log" 2>&1 &
+    ka_pid=$!
+    # The same three matchers alerts/logql.yaml keys on, bound to this script's
+    # own path so an unrelated line cannot satisfy the assertion.
+    exec_re="(Error exec-ing command|Couldn't (find|execute) command).*$exec_script"
+    i=0
+    while [ "$i" -lt 20 ]; do
+      if grep -Eq -- "$exec_re" "$exec_log"; then break; fi
+      i=$((i + 1))
+      sleep 1
+    done
+    kill "$ka_pid" 2>/dev/null || true
+    wait "$ka_pid" 2>/dev/null || true
+    if ! grep -Eq -- "$exec_re" "$exec_log"; then
+      err "FAIL: keepalived reported nothing about a track script it could not execute"
+      err "$(cat "$exec_log")"
+      fail=1
+    fi
+  fi
+else
+  log "note: KEEPALIVED_EXPECTED_VERSION unset - skipping script-exec report check (local run)"
+fi
+
 if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
   sbom=/usr/share/sbom/keepalived.cdx.json
   expected=${KEEPALIVED_EXPECTED_VERSION#v}
@@ -133,6 +211,9 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
     "Configuration file '" \
     '- disabling' \
     'Disabling track script' \
+    "Error exec-ing command '" \
+    "Couldn't find command: " \
+    "Couldn't execute command: " \
     'Wrong file type found in script path' \
     'cannot be accessed - ' \
     'specify unicast peers' \
