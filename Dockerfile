@@ -17,12 +17,18 @@ RUN apk add --no-cache \
         libnl3-dev \
         linux-headers \
         openssl-dev \
+        patch \
         pkgconf
 
 ARG KEEPALIVED_VERSION
 ARG KEEPALIVED_SHA256
 
 WORKDIR /build/keepalived
+COPY patches/ /build/patches/
+# --fuzz=0 so a release that moves the patched code fails the build instead of
+# applying a hunk somewhere else. Each patch header says what it fixes and when
+# it can be dropped; tests/smoke.sh asserts the behaviour they add.
+#
 # Both --enable-nftables and --disable-bfd are explicit on purpose: the
 # first turns missing nftables headers into a configure error, the
 # second pins off an opt-in feature so an upstream default flip cannot
@@ -34,6 +40,7 @@ RUN url="https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.
     && echo "${KEEPALIVED_SHA256}  ${tarball}" | sha256sum -c - \
     && tar xzf "$tarball" --strip-components=1 --no-same-owner \
     && rm "$tarball" \
+    && for p in /build/patches/*.patch; do patch -p1 --fuzz=0 -i "$p"; done \
     && ./configure \
         --prefix=/usr \
         --sysconfdir=/etc \

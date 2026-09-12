@@ -1,0 +1,93 @@
+Subject: report a track or notify script that could not be executed
+Date: 2026-09-12
+Applies-to: keepalived 2.4.3
+
+keepalived forks a child per track or notify script, redirects that child's
+stdin, stdout and stderr to /dev/null, and then calls execve. When execve
+fails it reports the failure with log_message(), which writes to stderr and to
+syslog. In a container neither survives: stderr is the fd that was just
+redirected, and syslog needs a /dev/log that is not there. So a script that
+cannot be executed produces no output at all, at any log level, and the whole
+failure has no observable symptom.
+
+A track script is the worse half. The child exits 0 after the failed execve,
+which keepalived reads as the script succeeding, so the node keeps its VIP
+through an outage of the service the script was installed to watch. A notify
+script's side effect simply never happens.
+
+The two cases that reach this in practice both pass every check keepalived
+makes at parse time, so nothing earlier reports them: a script whose shebang
+names an interpreter the image does not ship, and a script mounted from a
+filesystem carrying noexec.
+
+This keeps a copy of the console across the redirect and reports the exec
+diagnostics through it. Nothing else changes: the script's own output still
+goes to /dev/null, so no script can write into the log stream the alert rules
+in alerts/logql.yaml read.
+
+Drop this patch once a pinned release reports the failure itself.
+
+--- a/lib/notify.c
++++ b/lib/notify.c
+@@ -83,6 +83,26 @@
+ 	use_symlinks = state;
+ }
+ 
++/* A copy of the log console, taken before the child's stderr is redirected to
++ * /dev/null below so that the exec diagnostic in system_call_script() can
++ * still be reported through it. That diagnostic goes out through
++ * log_message(), which under --dont-fork --log-console writes to stderr and to
++ * syslog, and a container has no /dev/log for the syslog leg to reach. So
++ * without this the one report that a track or notify script could not be
++ * executed is written to /dev/null. Upstream keepalived 2.4.3 has no fix. */
++static int console_fd = -1;
++
++static void
++restore_log_console(void)
++{
++	if (console_fd < 0)
++		return;
++
++	dup2(console_fd, STDERR_FILENO);
++	close(console_fd);
++	console_fd = -1;
++}
++
+ static bool
+ set_script_env(uid_t uid, gid_t gid)
+ {
+@@ -108,6 +128,7 @@
+ 
+ 	/* Prepare for invoking process/script */
+ 	signal_handler_script();
++	console_fd = fcntl(STDERR_FILENO, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+ 	set_std_fd(false);
+ 
+ 	return false;
+@@ -272,11 +293,13 @@
+ 		execve(script->path ? script->path : script->args[0], args.execve_args, environ);
+ 
+ 		/* error */
++		restore_log_console();
+ 		log_message(LOG_ALERT, "Error exec-ing command '%s', error %d: %m", script->path ? script->path : script->args[0], errno);
+ 	} else {
+ 		retval = system(str = cmd_str(script));
+ 
+ 		if (retval == -1) {
++			restore_log_console();
+ 			log_message(LOG_ALERT, "Error exec-ing command: %s", str);
+ 			exit(0);
+ 		}
+@@ -284,10 +307,12 @@
+ 		if (WIFEXITED(retval)) {
+ 			if (WEXITSTATUS(retval) == 127) {
+ 				/* couldn't find command */
++				restore_log_console();
+ 				log_message(LOG_ALERT, "Couldn't find command: %s", str);
+ 			}
+ 			else if (WEXITSTATUS(retval) == 126) {
+ 				/* couldn't find command */
++				restore_log_console();
+ 				log_message(LOG_ALERT, "Couldn't execute command: %s", str);
+ 			}
+ 			else
