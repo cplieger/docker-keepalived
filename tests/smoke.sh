@@ -37,8 +37,10 @@ if printf '%s\n' "$ver" | grep -qw BFD; then
   fail=1
 fi
 
-# iptables must remain absent; the flag only skips the libiptc probe, so a builder
-# that gains those headers would ship a second firewall backend with a green build.
+# iptables must remain absent. --disable-iptables is the whole gate (configure.ac
+# tests enable_iptables before it probes for libiptc at all), so this fires only if
+# autoconf stops recognising the flag and silently ignores it, which is the same
+# detection the BFD assertion above provides.
 if printf '%s\n' "$ver" | grep -qw IPTABLES; then
   err "FAIL: build gained IPTABLES support - the image ships nftables only"
   fail=1
@@ -213,7 +215,6 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
     "Unknown keyword '" \
     'Line %zu)' \
     'Unable to read configuration file' \
-    'Unable to find configuration file' \
     'Failed to open configuration file' \
     "Configuration file '" \
     '- disabling' \

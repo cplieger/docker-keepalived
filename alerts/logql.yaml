@@ -36,9 +36,10 @@ groups:
       # how long a standing fault keeps paging AND when the alert gives up on it: once
       # the last transition line is older than the lookback the range vector is empty,
       # the comparison has no series, and the alert resolves with no recovery line
-      # behind it. Raise it to lengthen that memory, against your ruler's query-length
-      # limit and the number of sub-queries your query splitting makes of one
-      # evaluation; lower it if a container taken out of service mid-fault keeps
+      # behind it. Raise it to lengthen that memory, against your ruler's max_query_length,
+      # which counts this range for a ruler evaluation and fails it loudly, and its
+      # max_query_lookback, which does not fail it but silently shortens this memory to its
+      # own value; lower it if a container taken out of service mid-fault keeps
       # paging for too long. 7d is sized for one bound - a fault that starts before a
       # weekend still pages on Monday - and no finite value makes this memory
       # indefinite, which is why both descriptions below tell you a resolve may be a
@@ -223,7 +224,7 @@ groups:
         expr: |
           sum by (hostname) (count_over_time(
             {container="keepalived"}
-            |~ "(Unable to (read|find)|Failed to open) configuration file|Configuration file '" [15m]
+            |~ "(Unable to read|Failed to open) configuration file|Configuration file '" [15m]
           )) > 0
           or sum by (hostname) (count_over_time(
             {container="keepalived"}
@@ -238,12 +239,16 @@ groups:
             keepalived could not turn all or part of your config into
             running VRRP instances. Read the matched line and identify the
             object it names, because the scope differs.
-            The MAIN config is fatal: if keepalived cannot open, read or
-            find it, or will not treat it as a regular non-executable file,
+            The MAIN config is fatal: if keepalived cannot open or read it,
+            or will not treat it as a regular non-executable file,
             it exits before any child starts, so the container crash-loops,
             the pidof healthcheck never reports healthy, and
             KeepalivedPermanentError stays silent because no child died.
             Those lines carry no "(Line N)" prefix.
+            A main config that does not exist at all - an empty or missing mount -
+            is the one unusable-config case this rule cannot see: keepalived exits 6
+            the same way but logs only its start and stop banners, so the crash loop
+            is the signal.
             An INCLUDED file is partial: a file pulled in by plain
             `include` that keepalived cannot use is skipped, its directives
             never apply, and the rest of the config keeps serving - at
@@ -373,7 +378,8 @@ groups:
         expr: |
           sum by (hostname) (count_over_time(
             {container="keepalived"}
-            |~ "Netlink: error: .*type=RTM_(NEW|DEL)(ADDR|ROUTE|RULE)|Not adding address " [15m]
+            |~ "Netlink: error: .*type=RTM_(NEW|DEL)(ADDR|ROUTE|RULE)|Not adding address "
+            !~ "Netlink: error: .*\\(3\\), type=RTM_DELROUTE" [15m]
           )) > 0
         for: 0m
         labels:
@@ -393,12 +399,17 @@ groups:
             node goes on advertising as MASTER and winning the election while
             the VIP is on no node at all, and notify_master has already run.
             An RTM_DEL refusal is a failed RELEASE on leaving master.
-            keepalived has already logged "Entering BACKUP STATE" or
-            "Entering FAULT STATE" and clears its own record of the addresses
-            regardless, so the address, route or rule stays on THIS node
-            while a peer takes ownership - two nodes holding one address,
-            which is what KeepalivedDuplicateMaster reads from the other
-            side.
+            keepalived has already logged "Entering BACKUP STATE" or "Entering
+            FAULT STATE" and clears its own record of the addresses regardless,
+            so its record and the kernel's now disagree. Which way they disagree
+            is in the errno, and only one way is a conflict. EPERM means the
+            operation was refused for the capability, so the matching ADD was
+            refused too and this instance never held the address; the RTM_NEW
+            line above it is the real signal. An errno naming the object as absent
+            means it was already gone and no peer is in conflict. Any other errno
+            leaves the address, route or rule on THIS node while a peer takes
+            ownership, which is the case KeepalivedDuplicateMaster reads from the
+            other side.
             Nothing else reports either case. No track script failed, no
             instance is in FAULT for the add case, and the pidof healthcheck
             stays green, because the daemon is doing exactly what it was
