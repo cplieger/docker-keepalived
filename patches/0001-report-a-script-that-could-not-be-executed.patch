@@ -25,7 +25,9 @@ diagnostics through it. Nothing else changes: the script's own output still
 goes to /dev/null, so no script can write into the log stream the alert rules
 in alerts/logql.yaml read.
 
-Drop this patch once a pinned release reports the failure itself.
+Drop this patch once a pinned release reports the failure itself. Nothing has
+been filed upstream for it yet, so there is no issue or pull request to follow;
+the link goes here once there is one.
 
 --- a/lib/notify.c
 +++ b/lib/notify.c
