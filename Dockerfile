@@ -26,26 +26,22 @@ ARG KEEPALIVED_SHA256
 WORKDIR /build/keepalived
 COPY patches/ /build/patches/
 # --fuzz=0 so a release that moves the patched code fails the build instead of
-# applying a hunk somewhere else. Each patch header says what it fixes and when
-# it can be dropped; tests/smoke.sh asserts the behaviour they add.
-#
-# Both --enable-nftables and --disable-bfd are explicit on purpose: the
-# first turns missing nftables headers into a configure error, the
-# second pins off an opt-in feature so an upstream default flip cannot
-# arrive with an automerged version bump. tests/smoke.sh asserts both
-# against the built binary.
+# applying a hunk somewhere else. --enable-nftables, --disable-bfd and
+# --disable-iptables are explicit on purpose: missing nftables headers must fail
+# configure, and BFD and iptables must stay off across an automerged version bump.
 RUN url="https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.tar.gz" \
     && tarball="${url##*/}" \
     && curl -fsSL --connect-timeout 10 --max-time 120 --retry 7 --retry-max-time 150 --retry-all-errors -o "$tarball" "$url" \
     && echo "${KEEPALIVED_SHA256}  ${tarball}" | sha256sum -c - \
     && tar xzf "$tarball" --strip-components=1 --no-same-owner \
     && rm "$tarball" \
-    && for p in /build/patches/*.patch; do patch -p1 --fuzz=0 -i "$p"; done \
+    && for p in /build/patches/*.patch; do \
+        patch -p1 --fuzz=0 -i "$p" || exit 1; \
+        patch_list="${patch_list:+$patch_list,}${p##*/}"; \
+    done \
     && ./configure \
         --prefix=/usr \
         --sysconfdir=/etc \
-        --mandir=/usr/share/man \
-        --localstatedir=/var \
         --enable-json \
         --enable-nftables \
         --disable-bfd \
@@ -66,7 +62,7 @@ RUN url="https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.
       "type": "application",
       "name": "keepalived",
       "version": "${KEEPALIVED_VERSION#v}",
-      "purl": "pkg:generic/keepalived@${KEEPALIVED_VERSION#v}?download_url=${url}&checksum=sha256:${KEEPALIVED_SHA256}",
+      "purl": "pkg:generic/keepalived@${KEEPALIVED_VERSION#v}?download_url=${url}&checksum=sha256:${KEEPALIVED_SHA256}&patch=${patch_list}",
       "cpe": "cpe:2.3:a:keepalived:keepalived:${KEEPALIVED_VERSION#v}:*:*:*:*:*:*:*"
     }
   ]
@@ -97,6 +93,7 @@ ARG KEEPALIVED_VERSION
 ARG KEEPALIVED_SHA256
 RUN apk add --no-cache jq
 COPY tests/ /tmp/tests/
+COPY patches/ /tmp/patches/
 # The `:?` guards fail the build if either ARG's wiring ever breaks, so the
 # smoke test's exact version and checksum assertions can never be skipped
 # in-image.

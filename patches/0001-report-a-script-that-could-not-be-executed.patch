@@ -25,21 +25,19 @@ diagnostics through it. Nothing else changes: the script's own output still
 goes to /dev/null, so no script can write into the log stream the alert rules
 in alerts/logql.yaml read.
 
-Drop this patch once a pinned release reports the failure itself.
+Drop this patch once a pinned release reports the failure itself. Nothing has
+been filed upstream for it yet, so there is no issue or pull request to follow;
+the link goes here once there is one.
 
 --- a/lib/notify.c
 +++ b/lib/notify.c
-@@ -83,6 +83,26 @@
+@@ -83,6 +83,22 @@
  	use_symlinks = state;
  }
  
 +/* A copy of the log console, taken before the child's stderr is redirected to
-+ * /dev/null below so that the exec diagnostic in system_call_script() can
-+ * still be reported through it. That diagnostic goes out through
-+ * log_message(), which under --dont-fork --log-console writes to stderr and to
-+ * syslog, and a container has no /dev/log for the syslog leg to reach. So
-+ * without this the one report that a track or notify script could not be
-+ * executed is written to /dev/null. Upstream keepalived 2.4.3 has no fix. */
++ * /dev/null below, so the exec diagnostic in system_call_script() can still be
++ * reported through it. Upstream keepalived 2.4.3 has no fix. */
 +static int console_fd = -1;
 +
 +static void
@@ -56,7 +54,7 @@ Drop this patch once a pinned release reports the failure itself.
  static bool
  set_script_env(uid_t uid, gid_t gid)
  {
-@@ -108,6 +128,7 @@
+@@ -108,6 +124,7 @@
  
  	/* Prepare for invoking process/script */
  	signal_handler_script();
@@ -64,7 +62,7 @@ Drop this patch once a pinned release reports the failure itself.
  	set_std_fd(false);
  
  	return false;
-@@ -272,11 +293,13 @@
+@@ -272,11 +289,13 @@
  		execve(script->path ? script->path : script->args[0], args.execve_args, environ);
  
  		/* error */
@@ -78,7 +76,7 @@ Drop this patch once a pinned release reports the failure itself.
  			log_message(LOG_ALERT, "Error exec-ing command: %s", str);
  			exit(0);
  		}
-@@ -284,10 +307,12 @@
+@@ -284,10 +303,12 @@
  		if (WIFEXITED(retval)) {
  			if (WEXITSTATUS(retval) == 127) {
  				/* couldn't find command */

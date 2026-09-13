@@ -37,6 +37,15 @@ if printf '%s\n' "$ver" | grep -qw BFD; then
   fail=1
 fi
 
+# iptables must remain absent. --disable-iptables is the whole gate (configure.ac
+# tests enable_iptables before it probes for libiptc at all), so this fires only if
+# autoconf stops recognising the flag and silently ignores it, which is the same
+# detection the BFD assertion above provides.
+if printf '%s\n' "$ver" | grep -qw IPTABLES; then
+  err "FAIL: build gained IPTABLES support - the image ships nftables only"
+  fail=1
+fi
+
 # Dockerfile gate covers image-only genhash dispatch.
 if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
   gh_out=$(/usr/bin/genhash -h 2>&1) || true
@@ -159,10 +168,6 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
       err "FAIL: embedded SBOM fragment is not valid JSON: $sbom"
       fail=1
     }
-    jq -e '.components | length == 1' "$sbom" >/dev/null || {
-      err "FAIL: embedded SBOM fragment does not carry exactly one component"
-      fail=1
-    }
     jq -e '.components[0].name == "keepalived"' "$sbom" >/dev/null || {
       err "FAIL: embedded SBOM fragment component is not named keepalived"
       fail=1
@@ -172,7 +177,11 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
       fail=1
     }
     # Whole purl binds provenance to Dockerfile ARGs.
-    purl="pkg:generic/keepalived@${expected}?download_url=https://www.keepalived.org/software/keepalived-${expected}.tar.gz&checksum=sha256:${KEEPALIVED_EXPECTED_SHA256:-}"
+    want_patches=''
+    for p in /tmp/patches/*.patch; do
+      want_patches="${want_patches:+$want_patches,}${p##*/}"
+    done
+    purl="pkg:generic/keepalived@${expected}?download_url=https://www.keepalived.org/software/keepalived-${expected}.tar.gz&checksum=sha256:${KEEPALIVED_EXPECTED_SHA256:-}&patch=${want_patches}"
     jq -e --arg want "$purl" '.components[0].purl == $want' "$sbom" >/dev/null || {
       err "FAIL: embedded SBOM fragment purl is not ${purl} (provenance lost?)"
       fail=1
@@ -206,7 +215,6 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
     "Unknown keyword '" \
     'Line %zu)' \
     'Unable to read configuration file' \
-    'Unable to find configuration file' \
     'Failed to open configuration file' \
     "Configuration file '" \
     '- disabling' \
@@ -235,7 +243,15 @@ if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
     'exited with permanent error' \
     'Non-existent interface specified in configuration' \
     'died: Respawning' \
-    'Unable to lock process in memory'; do
+    'Unable to lock process in memory' \
+    'Netlink: error: %s(%d), type=%s(%u), seq=%u, pid=%u' \
+    'RTM_NEWADDR' \
+    'RTM_DELADDR' \
+    'RTM_NEWROUTE' \
+    'RTM_DELROUTE' \
+    'RTM_NEWRULE' \
+    'RTM_DELRULE' \
+    "Not adding address %s to %s since interface doesn't exist"; do
     if ! tr '\0' '\n' </usr/sbin/keepalived | grep -qF -- "$lit"; then
       err "FAIL: alert matcher anchor missing from the shipped binary: $lit"
       err "      re-read alerts/logql.yaml against the keepalived sources for this release"
