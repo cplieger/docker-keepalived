@@ -18,7 +18,7 @@
 # it could never fail. That one word is ungated: re-read it against the
 # sources on a keepalived bump.
 # README.md restates what these rules mean and the operator guidance they
-# depend on — the Alerting table and the surrounding operator sections —
+# depend on (the Alerting table and the surrounding operator sections),
 # and nothing checks the two agree, so an edit here that changes what a
 # rule means, when it fires, or which keepalived directives it talks about
 # is an edit there too.
@@ -28,7 +28,7 @@ groups:
       # Both state rules below read the LATEST status per object rather than counting
       # events, because keepalived logs a track script and a VRRP state only on CHANGE.
       # A count over a window cannot tell "failed and still failing" from "failed and
-      # recovered" — it sees one line either way — so an event-shaped rule pages on every
+      # recovered", since it sees one line either way, so an event-shaped rule pages on every
       # rolling redeploy of the tracked service. `last_over_time` on a 0/1 label is
       # order-aware: the recovery line drives the value back to 0 and the alert clears by
       # itself, and the `for` window is what a genuine outage has to outlive. The lookback
@@ -69,7 +69,7 @@ groups:
             instead, so it may still hold the VIP. Read the state lines beside this one
             for which happened.
             A recreate of the tracked container recovers in tens of seconds and is
-            deliberately below this threshold — raise `for` if your service starts slower.
+            deliberately below this threshold; raise `for` if your service starts slower.
             This rule remembers the last status for 7 days. If it resolves and you never
             saw a `succeeded` line for this script, the last failure aged out of that
             window rather than recovered - read the log before treating the resolve as a
@@ -242,7 +242,7 @@ groups:
             The MAIN config is fatal: if keepalived cannot open or read it,
             or will not treat it as a regular non-executable file,
             it exits before any child starts, so the container crash-loops,
-            the pidof healthcheck never reports healthy, and
+            the healthcheck never reports healthy, and
             KeepalivedPermanentError stays silent because no child died.
             Those lines carry no "(Line N)" prefix.
             A main config that does not exist at all - an empty or missing mount -
@@ -258,9 +258,10 @@ groups:
             Those lines carry a "(Line N)" prefix naming the line the
             include sits on.
             "has no configuration to run" is the third case: the config
-            parsed and declared no VRRP instance or LVS virtual server at
-            all, so the daemon is up and idle, nothing crashes, and the
-            healthcheck stays green.
+            parsed but no subsystem in it produced a child, an empty file or
+            a global_defs block alone being the usual shape, so the daemon is
+            up and idle with no child process, nothing crashes, and the
+            healthcheck reports unhealthy once its retries are spent.
             Check your keepalived.conf, its includes and their modes -
             keepalived will not use a config file that is not a regular
             file or that has an execute bit set - and then read the VIP
@@ -286,7 +287,7 @@ groups:
             side effect the operator attached to it does not - an address or
             route the new MASTER was supposed to install never appears.
             Identify the script named in the line before acting. Nothing else
-            reports either state: the daemon runs, VRRP works, and the pidof
+            reports either state: the daemon runs, VRRP works, and the
             healthcheck stays green. The usual cause is path permissions under
             enable_script_security, so see README "enable_script_security"; it
             also fires for a script keepalived cannot find, cannot execute as
@@ -354,9 +355,14 @@ groups:
             long-lived connection through it. A respawn while it was BACKUP does
             not by itself show any ownership change; read the preceding state lines
             to see which happened. For the Healthcheck child, the VIPs stay put and
-            only LVS real-server checking paused. The container healthcheck cannot
-            see either case: the parent survives. Check the log lines just before
-            this one for the child's exit status.
+            only LVS real-server checking paused. A child that had run for at
+            least a minute is respawned at once, before the next probe, so the
+            container healthcheck normally stays green and this alert is the
+            only report of the death. A child that keeps dying inside its first
+            minute is restarted with a growing delay of up to 60 seconds and can
+            turn the healthcheck unhealthy; this alert fires on every death
+            either way. Check the log lines just before this one for the child's
+            exit status.
       - alert: KeepalivedMemlockFailed
         expr: |
           sum by (hostname) (count_over_time({container="keepalived"} |= "Unable to lock process in memory" [15m])) > 0
@@ -411,7 +417,7 @@ groups:
             ownership, which is the case KeepalivedDuplicateMaster reads from the
             other side.
             Nothing else reports either case. No track script failed, no
-            instance is in FAULT for the add case, and the pidof healthcheck
+            instance is in FAULT for the add case, and the healthcheck
             stays green, because the daemon is doing exactly what it was
             told. The usual cause is a container without NET_ADMIN: the raw
             VRRP socket needs only NET_RAW, so keepalived starts, elects and
