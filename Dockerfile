@@ -102,11 +102,13 @@ RUN KEEPALIVED_EXPECTED_VERSION="${KEEPALIVED_VERSION:?}" \
     sh /tmp/tests/smoke.sh \
     && touch /tests-passed
 
-# Final stage — must stay last (the CI gate builds the default target); the
+# Final stage, must stay last (the CI gate builds the default target); the
 # marker COPY is what forces the test stage to build and pass first.
 FROM base AS final
 COPY --from=test /tests-passed /tests-passed
 
+# Scoped to children of PID 1 by command line: the parent alone must not read as
+# healthy, and genhash (the same executable) must not count as a child.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
-    CMD ["pidof", "keepalived"]
+    CMD ["pgrep", "-P", "1", "-f", "(^|/)keepalived([[:space:]]|$)"]
 ENTRYPOINT ["keepalived", "--dont-fork", "--log-console", "--log-detail"]
