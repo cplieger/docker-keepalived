@@ -49,6 +49,7 @@ RUN url="https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.
         --disable-systemd \
     && make -j"$(nproc)" \
     && install -D -m 755 bin/keepalived /out/usr/sbin/keepalived \
+    && install -D -m 644 COPYING /out/usr/share/licenses/keepalived/COPYING \
     # Syft identifies no source-built keepalived; the release pipeline finds
     # this fragment by its .cdx.json suffix.
     && cat > /out/keepalived.cdx.json <<EOF
@@ -69,6 +70,8 @@ RUN url="https://www.keepalived.org/software/keepalived-${KEEPALIVED_VERSION#v}.
 }
 EOF
 
+COPY LICENSE NOTICE /out/usr/share/licenses/docker-keepalived/
+
 FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS base
 
 # The `echo` is load-bearing: BuildKit keys a RUN on the args it CONSUMES, so a
@@ -85,6 +88,7 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
 
 COPY --from=builder /out/usr/sbin/keepalived /usr/sbin/keepalived
 COPY --from=builder /out/keepalived.cdx.json /usr/share/sbom/keepalived.cdx.json
+COPY --from=builder /out/usr/share/licenses /usr/share/licenses
 # keepalived runs in genhash mode when it is invoked as genhash (argv[0]).
 RUN ln -s ../sbin/keepalived /usr/bin/genhash
 
@@ -106,6 +110,7 @@ RUN KEEPALIVED_EXPECTED_VERSION="${KEEPALIVED_VERSION:?}" \
 # marker COPY is what forces the test stage to build and pass first.
 FROM base AS final
 COPY --from=test /tests-passed /tests-passed
+COPY licenses/ /usr/share/licenses/
 
 # Scoped to children of PID 1 by command line: the parent alone must not read as
 # healthy, and genhash (the same executable) must not count as a child.
