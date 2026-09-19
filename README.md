@@ -254,6 +254,8 @@ This project was built with AI-assisted tooling using [Claude](https://claude.co
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE). The image carries the license text of every bundled component under `/usr/share/licenses/`. The Alpine packages in the image ship no license file upstream, so their license texts are kept under `licenses/` in this repository and copied in.
 
-`patches/` is an exception. It holds a modification to keepalived's own source, so that file stays GPL-2.0 under upstream's terms. Its header states what it changes and the condition for removing it.
+The bundled component is keepalived itself, which is GPL-2.0-or-later. The build fetches the pinned release tarball `https://www.keepalived.org/software/keepalived-2.4.3.tar.gz` (`KEEPALIVED_VERSION=v2.4.3`), verifies its SHA256, and applies one checked-in patch, [`patches/0001-report-a-script-that-could-not-be-executed.patch`](patches/0001-report-a-script-that-could-not-be-executed.patch), which is a local modification with no upstream commit behind it and is therefore part of the source the shipped binary is built from. keepalived's own `COPYING` travels in the image at `/usr/share/licenses/keepalived/COPYING`, and the upstream project is [acassen/keepalived](https://github.com/acassen/keepalived). That tarball, this repository's `Dockerfile` and the files in `patches/` are the complete recipe for the binary in the image, which is how anyone who receives it gets the corresponding source.
+
+`patches/` is an exception. It holds a modification to keepalived's own source, so that file stays GPL-2.0-or-later under upstream's terms. Its header states what it changes and the condition for removing it.
