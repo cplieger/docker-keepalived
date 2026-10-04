@@ -130,7 +130,7 @@ The container uses `network_mode: host`, because VRRP adverts are multicast on y
 
 The container runs as root by design. keepalived needs `NET_ADMIN` to add and remove the virtual IP on a host interface and `NET_RAW` to build VRRP packets. Grant those two with `cap_add` rather than `privileged`. Mount `/etc/keepalived` read-only. It is the only bind mount the image needs, and a writable one would let the container change the scripts keepalived runs as root. Set `enable_script_security` so keepalived refuses any script a non-root user could change. `auth_pass` travels in clear text, so VRRP authentication guards against a misconfigured peer, not an attacker.
 
-One scan finding is accepted, AVD-DS-0002 "image user should not be root", because a non-root user cannot manage the virtual IP. The keepalived binary carries one patch, which reports a script keepalived could not execute. It is dropped once a keepalived release reports that failure itself. [Security](docs/security.md) covers the read-only profile, signature checks and what the image contains.
+One scan finding is accepted, AVD-DS-0002 "image user should not be root", because a non-root user cannot manage the virtual IP. The keepalived binary carries one patch, which reports a script keepalived could not execute. It is dropped once a keepalived release reports that failure itself. [Security](docs/hardening.md) covers the read-only profile, signature checks and what the image contains.
 
 ## Troubleshooting
 
@@ -152,7 +152,7 @@ keepalived writes every VRRP state change, check-script result and config error 
 - [Configuration](docs/configuration.md) covers script permissions, locked memory, reloads and IPv6 router advertisements.
 - [How docker-keepalived works](docs/how-it-works.md) covers the design, what the image runs, the healthcheck and the exit codes.
 - [Monitoring and alerts](docs/monitoring.md) lists the alert rules and the state dumps.
-- [Security](docs/security.md) covers the privilege model, the read-only profile, the patch and image signatures.
+- [Security](docs/hardening.md) covers the privilege model, the read-only profile, the patch and image signatures.
 
 ## Credits
 

@@ -10,7 +10,7 @@ This page explains what the image runs and what its healthcheck and exit codes m
 
 ## What the image runs
 
-The entrypoint is `keepalived --dont-fork --log-console --log-detail`, so every VRRP state change, track-script result and config warning goes to `docker logs keepalived`. keepalived is compiled from a pinned official source release with one patch applied, described in [Security](security.md#the-keepalived-patch). The image also ships keepalived's `genhash` digest helper, which you use to fill in an `HTTP_GET` checker's digest.
+The entrypoint is `keepalived --dont-fork --log-console --log-detail`, so every VRRP state change, track-script result and config warning goes to `docker logs keepalived`. keepalived is compiled from a pinned official source release with one patch applied, described in [Security](hardening.md#the-keepalived-patch). The image also ships keepalived's `genhash` digest helper, which you use to fill in an `HTTP_GET` checker's digest.
 
 ## Healthcheck and exit codes
 
