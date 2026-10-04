@@ -17,11 +17,11 @@
 # in, and the binary carries unrelated strings containing it, so a grep for
 # it could never fail. That one word is ungated: re-read it against the
 # sources on a keepalived bump.
-# README.md restates what these rules mean and the operator guidance they
-# depend on (the Alerting table and the surrounding operator sections),
-# and nothing checks the two agree, so an edit here that changes what a
-# rule means, when it fires, or which keepalived directives it talks about
-# is an edit there too.
+# docs/monitoring.md and docs/configuration.md restate what these rules mean
+# and the operator guidance they depend on (the Alerting table and the
+# surrounding operator sections), and nothing checks the two agree, so an
+# edit here that changes what a rule means, when it fires, or which
+# keepalived directives it talks about is an edit there too.
 groups:
   - name: keepalived
     rules:
@@ -289,9 +289,10 @@ groups:
             Identify the script named in the line before acting. Nothing else
             reports either state: the daemon runs, VRRP works, and the
             healthcheck stays green. The usual cause is path permissions under
-            enable_script_security, so see README "enable_script_security"; it
-            also fires for a script keepalived cannot find, cannot execute as
-            its run-as user, or cannot set uid/gid for.
+            enable_script_security. See docs/configuration.md, section Script
+            permissions under enable_script_security. The rule also fires
+            for a script keepalived cannot find, cannot execute as its
+            run-as user, or cannot set uid/gid for.
       - alert: KeepalivedScriptExecFailed
         expr: |
           sum by (hostname) (count_over_time(
@@ -376,8 +377,8 @@ groups:
             mlockall failed, so the option is inert for the
             life of this process and the child can be swapped out. keepalived
             appends the errno to that log line: read it, then check both the
-            container's locked-memory limit (RLIMIT_MEMLOCK, see README
-            "Resource limits") and whether the container has CAP_IPC_LOCK.
+            container's locked-memory limit (RLIMIT_MEMLOCK, see docs/configuration.md
+            "Locked memory for vrrp_no_swap") and whether the container has CAP_IPC_LOCK.
             keepalived logs this once at startup and carries on, so nothing
             else reports it.
       - alert: KeepalivedVIPOperationRefused
@@ -422,7 +423,7 @@ groups:
             told. The usual cause is a container without NET_ADMIN: the raw
             VRRP socket needs only NET_RAW, so keepalived starts, elects and
             adverts normally and only the address operation is refused (see
-            README "Capabilities"). The other cause is an interface that went
+            the README "Configuration reference"). The other cause is an interface that went
             away after the config was read, which logs the "Not adding
             address" form and names the interface. The line carries the errno
             and the netlink message type; read it, then check the container's
