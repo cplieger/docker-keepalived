@@ -1,18 +1,17 @@
-# Example compose for docker-keepalived. See the README for all configuration options and hardening.
+# Example compose for docker-keepalived. See docs/configuration.md and docs/security.md for all configuration options and hardening.
 services:
   keepalived:
     image: ghcr.io/cplieger/docker-keepalived:latest
     container_name: keepalived
     restart: unless-stopped
 
-    # VRRP multicast on a real LAN interface needs host networking + raw-socket/admin caps.
+    # VRRP sends multicast adverts on your LAN, so it needs host networking and these two capabilities.
     network_mode: host
     cap_add:
       - NET_ADMIN
       - NET_RAW
 
-    # If the conf sets enable_script_security, the mount must be root-owned and not group- or
-    # world-writable, else keepalived logs "Unsafe permissions found" and disables the scripts.
-    # See README "enable_script_security".
+    # Put keepalived.conf in ./keepalived and your scripts in ./keepalived/scripts before the first start.
+    # Give the folder to root and let only root write to it, or keepalived disables your scripts.
     volumes:
       - "./keepalived:/etc/keepalived:ro"

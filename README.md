@@ -3,24 +3,35 @@
 [![Image Size](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/cplieger/docker-keepalived/badges/size.json)](https://github.com/cplieger/docker-keepalived/pkgs/container/docker-keepalived) [![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-blue)](https://github.com/cplieger/docker-keepalived/pkgs/container/docker-keepalived) [![base: Alpine](https://img.shields.io/badge/base-Alpine-0D597F?logo=alpinelinux)](https://github.com/cplieger/docker-keepalived/blob/main/Dockerfile) [![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/docker-keepalived/releases)
 
 <!-- hub-overview BEGIN -->
-Run [keepalived](https://www.keepalived.org/) (VRRP failover / high availability) in a container. Bring your own `keepalived.conf`.
+docker-keepalived runs [keepalived](https://www.keepalived.org/) in a container, so two or more Linux hosts share a virtual IP address that moves to a healthy host when one fails. You write the `keepalived.conf`. The image does not generate one from settings.
 
 ## What it does
 
-[keepalived](https://www.keepalived.org/) implements VRRP, so two or more machines share a virtual IP with automatic failover: one node owns the VIP, and another takes over within seconds if it dies.
+docker-keepalived keeps one address reachable while a host, or a service on it, goes down.
 
-This image is a minimal Alpine wrapper around upstream `keepalived`, compiled from a pinned upstream source release. There's no entrypoint magic, no env-var-to-config translation, no bundled scripts: you mount your own `keepalived.conf` and any track / notify scripts it references, and keepalived runs as PID 1. The image also ships keepalived's `genhash` digest helper for `HTTP_GET` checker configuration.
+- Moves the virtual IP to another host within seconds when the host holding it stops sending adverts.
+- Moves it when a check script you write reports that your service is down.
+- Rereads a changed `keepalived.conf` on a reload signal, without restarting the container.
+- Reports every failover and failed check in `docker logs`, with 11 Loki alert rules ready to load.
 
-### Why this design
+## Who it is for
 
-- **Generic upstream-only**: no custom track scripts baked in, so the image works for any VRRP topology without inheriting someone else's check logic
-- **Bind-mount only**: all configuration arrives through one read-only `:ro` mount of `/etc/keepalived`, and the published example adds no writable bind mounts
-- **No PID 1 wrapper**: `keepalived --dont-fork` runs as PID 1 directly, so SIGTERM from `docker stop` reaches it instantly
+docker-keepalived is built for admins who already write keepalived configurations and want keepalived in a container. It runs a pinned official keepalived release, patched so a check script that cannot start shows in the log.
+
+You need two or more Linux hosts with Docker on one network, on `amd64` or `arm64`. The container runs as root with host networking and the `NET_ADMIN` and `NET_RAW` capabilities.
+
+Three other options suit other setups:
+
+- Consider your distribution's keepalived package to run it on the host itself, which its maintainers call the quickest install.
+- Consider [osixia/keepalived](https://github.com/osixia/container-keepalived) if you want the configuration generated from environment variables.
+- Consider [kube-vip](https://kube-vip.io/) if you want a virtual IP for a Kubernetes control plane or LoadBalancer services.
+
+docker-keepalived is free software under the Apache-2.0 license. keepalived itself is under GPL-2.0-or-later.
 <!-- hub-overview END -->
 
 ## Quick start
 
-Available from both `ghcr.io/cplieger/docker-keepalived` and `docker.io/cplieger/docker-keepalived`: identical images and tags.
+The image is on GitHub Container Registry and Docker Hub, for `amd64` and `arm64`. This is the [`compose.yaml`](compose.yaml) in this repository. Besides `latest`, each release is tagged with its full, minor and major version, such as `v2.4.0`, `v2.4` and `v2`, so every host can run the same release. These are the image's own version numbers, separate from the keepalived version inside it.
 
 ```yaml
 services:
@@ -29,222 +40,127 @@ services:
     container_name: keepalived
     restart: unless-stopped
 
-    # VRRP needs host networking + raw socket / admin caps.
+    # VRRP sends multicast adverts on your LAN, so it needs host networking and these two capabilities.
     network_mode: host
     cap_add:
       - NET_ADMIN
       - NET_RAW
 
-    # Mount your keepalived.conf and any track / notify scripts it references.
-    # A scripts/ subdir alongside keepalived.conf is the natural layout, with
-    # paths like /etc/keepalived/scripts/<name>.sh.
+    # Put keepalived.conf in ./keepalived and your scripts in ./keepalived/scripts before the first start.
+    # Give the folder to root and let only root write to it, or keepalived disables your scripts.
     volumes:
       - "./keepalived:/etc/keepalived:ro"
 ```
 
-Minimal `keepalived.conf` (active node, priority 150):
+On each host:
 
-```conf
-global_defs {
-    router_id MY_PRIMARY
-    script_user root
-    enable_script_security
-}
+1. In the folder that holds `compose.yaml`, create a `keepalived` folder and a `keepalived/scripts` folder inside it.
+2. Save this as `keepalived/keepalived.conf`. Replace `eth0` with the host's LAN interface, `192.0.2.250/24` with the address to share and its prefix length, and `changeme` with a password of your own, the same on every host. On the other hosts, change `state MASTER` to `state BACKUP` and `priority 150` to `priority 100`.
 
-vrrp_script chk_app {
-    script "/etc/keepalived/scripts/check_app.sh"
-    interval 5
-    timeout 3
-    fall 2
-    rise 2
-}
+   ```conf
+   global_defs {
+       router_id MY_PRIMARY
+       script_user root
+       enable_script_security
+   }
 
-vrrp_instance VI_1 {
-    state MASTER
-    interface eth0
-    virtual_router_id 51
-    priority 150
-    advert_int 1
-    authentication {
-        auth_type PASS
-        auth_pass changeme
-    }
-    virtual_ipaddress {
-        192.0.2.250/24
-    }
-    track_script {
-        chk_app
-    }
-}
-```
+   vrrp_script chk_app {
+       script "/etc/keepalived/scripts/check_app.sh"
+       interval 5
+       timeout 3
+       fall 2
+       rise 2
+   }
 
-The backup node uses the same config with `state BACKUP`, `priority 100`, and the same `auth_pass`.
+   vrrp_instance VI_1 {
+       state MASTER
+       interface eth0
+       virtual_router_id 51
+       priority 150
+       advert_int 1
+       authentication {
+           auth_type PASS
+           auth_pass changeme
+       }
+       virtual_ipaddress {
+           192.0.2.250/24
+       }
+       track_script {
+           chk_app
+       }
+   }
+   ```
 
-## ⚠️ enable_script_security and bind-mount permissions
+3. Save this check script as `keepalived/scripts/check_app.sh`. It passes while a web server answers on port 80 of the host, so change the address to the service you want to watch. Keep the `#!/bin/sh` line, because the image is based on Alpine and has no `bash`.
 
-If your `keepalived.conf` sets `enable_script_security` in `global_defs` (recommended), keepalived **refuses to execute scripts whose path inside the container has any non-root-writable component**. It disables the track script and names it in the log:
+   ```sh
+   #!/bin/sh
+   wget -q --spider http://127.0.0.1:80/
+   ```
 
-```text
-Unsafe permissions found for script '/etc/keepalived/scripts/check_app.sh' - disabling.
-Disabling track script chk_app due to insecure
-```
+4. Give both folders to root and let only root write to them:
 
-Inside the container, `/etc/keepalived` mirrors the host bind-mount source's ownership and mode. So you need to ensure:
+   ```bash
+   sudo chown -R root:root keepalived
+   sudo chmod 755 keepalived keepalived/scripts
+   sudo chmod 644 keepalived/keepalived.conf
+   sudo find keepalived/scripts -type f -exec chmod 755 {} +
+   ```
 
-- The host directory you mount at `/etc/keepalived`, and any `scripts/` subdirectory, is owned by `root:root` and **not group- or world-writable** (mode 755 is fine; 770 is not, because group-writable counts as "writable by non-root")
-- Each track / notify script **file** must also be root-owned and not group/world-writable; keepalived applies the same check to the script file, not just its parent directories
+5. Run `docker compose up -d`.
 
-Watch for host directories that inherit non-root ownership from a parent directory. Fix on each server with:
-
-```bash
-chown -R root:root /path/to/keepalived
-chmod 755 /path/to/keepalived /path/to/keepalived/scripts
-# script files must also be non-group/world-writable (keepalived checks the file too)
-chmod 644 /path/to/keepalived/keepalived.conf
-find /path/to/keepalived/scripts -type f -exec chmod 755 {} +
-```
-
-If you don't use `enable_script_security`, the script-permission rules above do not apply, but you should use it. One check applies either way: keepalived will not use a config file that is not a regular file or has an execute bit set (`Configuration file '...' is not a regular non-executable file - skipping`). For your mounted `keepalived.conf`, that is fatal at startup: keepalived exits before starting VRRP and the restart policy crash-loops the container. `KeepalivedPermanentError` stays silent because no child process died. Keep `keepalived.conf` mode 644, whatever else you set. The same line means the daemon carried on when the skipped file was an `include`d one rather than the main config.
-
-Two ways a script that passes every check above still never runs: its shebang names an interpreter this image does not have (the base is Alpine, so `#!/bin/bash` is not one of them), or it sits on a filesystem mounted `noexec`. Both fail when keepalived forks the script rather than when it reads the config, so the permission warnings never appear. The image reports both as `Error exec-ing command '/etc/keepalived/scripts/check_app.sh', error <n>: <reason>` in `docker logs`, and `KeepalivedScriptExecFailed` in [`alerts/logql.yaml`](alerts/logql.yaml) is the rule for it. Watch for it on a track script in particular: the failed exec is reported as the check having **succeeded**, so the node keeps the VIP through an outage of whatever that script was watching.
+Run `docker logs keepalived`. You should see `Starting VRRP child process`. If you see `Unsafe permissions found for script`, keepalived disabled that script because step 4 was skipped.
 
 ## Configuration reference
 
-### Volumes
+Every setting lives in `keepalived.conf`. The image reads no environment variables. keepalived reads the file at start, and again when you run `docker kill -s HUP keepalived`. A reload keeps the state of unchanged instances, and changed ones renegotiate briefly. Seven settings need a full restart instead, listed in [Configuration](docs/configuration.md#reloading-without-a-restart). If multicast does not pass between your hosts, list them with `unicast_peer`, as [Configuration](docs/configuration.md#multicast-and-unicast) shows.
 
-| Mount             | Description                                                                                                                                                                   |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/etc/keepalived` | Your `keepalived.conf` and any track / notify scripts it references. Mount read-only. **Must be root-owned and not group/world-writable** if `enable_script_security` is set. |
+| Mount | Description |
+| --- | --- |
+| `/etc/keepalived` | Your `keepalived.conf` and the scripts it names. Mount it read-only. It must be root-owned and not group- or world-writable when `enable_script_security` is set |
 
-### Capabilities
+| Capability | Why it is needed |
+| --- | --- |
+| `NET_ADMIN` | Adding and removing the virtual IP, and setting socket options |
+| `NET_RAW` | Building VRRP packets on raw sockets, and ICMP probes |
 
-| Capability  | Why needed                                                    |
-| ----------- | ------------------------------------------------------------- |
-| `NET_ADMIN` | Adding / removing the virtual IP, socket option configuration |
-| `NET_RAW`   | Constructing VRRP packets (raw sockets) and ICMP probes       |
-
-### Networking
-
-| Setting        | Value  | Reason                                                                                        |
-| -------------- | ------ | --------------------------------------------------------------------------------------------- |
-| `network_mode` | `host` | VRRP advertisements use multicast on the LAN segment; container networking would isolate them |
-
-VRRP multicast addresses (RFC 5798): `224.0.0.18` (IPv4), `ff02::12` (IPv6). `NET_BROADCAST` is **not** required.
-
-### Resource limits
-
-The image needs no resource limits to run, with one exception. If your `keepalived.conf` sets `vrrp_no_swap` (or `checker_no_swap`), raise the container's locked-memory limit too, or the option will not do what it says.
-
-Those options make the child process call `mlockall()`, and `RLIMIT_MEMLOCK` is charged against locked _address space_, not resident memory. A container that sets no `ulimits:` inherits the Docker daemon's own limit, which on a systemd host is 8 MiB unless the daemon's unit says otherwise. This image's VRRP child maps about 7.4 MiB of program text and shared libraries before its first allocation (OpenSSL's libcrypto is 4.8 MiB of that, amd64), so 8 MiB leaves it almost no room — and 64 KiB, the kernel default on hosts with no systemd bump, leaves it none at all.
-
-```yaml
-    ulimits:
-      memlock:
-        soft: 67108864  # 64 MiB, ~8x the child's mapped size
-        hard: 67108864
-```
-
-Two failure modes, so you can tell them apart in `docker logs`:
-
-- **Limit below the child's virtual size.** `mlockall` fails at startup, keepalived logs `Unable to lock process in memory - Cannot allocate memory` once, and carries on with `vrrp_no_swap` silently inert from then on. The `KeepalivedMemlockFailed` rule in [`alerts/logql.yaml`](alerts/logql.yaml) is what catches it (see [Alerting](#alerting)).
-- **Limit just above it.** The lock succeeds and a later allocation is refused instead: `Keepalived: Resource temporarily unavailable` (no timestamp — it is a `perror`, not a log line), the VRRP child exits 204, and the parent respawns it, which moves the VIP out and back. The healthcheck stays green when the child had run for at least a minute, because the parent then respawns it at once and the probe never sees the gap; a child that keeps dying inside its first minute is respawned with a growing delay of up to 60s and can turn the healthcheck unhealthy. Either way the `KeepalivedChildRespawned` rule in [`alerts/logql.yaml`](alerts/logql.yaml) is what catches it (see [Alerting](#alerting)). keepalived prints `Please log an issue at ...` for any child death, so that banner is not evidence of an upstream bug.
-
-Check what your host actually granted:
-
-```bash
-docker exec keepalived grep 'Max locked memory' /proc/1/limits
-```
-
-Sizing caveat: keepalived's interface table gains an entry per interface the host has ever had and does not release it ([upstream #2709](https://github.com/acassen/keepalived/issues/2709)), and every container start on the host creates a veth. So on a busy host a finite limit sets how long the child lives rather than preventing the exit — headroom buys time, it is not a cure.
-
-## Healthcheck
-
-The built-in healthcheck runs `pgrep -P 1 -f '(^|/)keepalived([[:space:]]|$)'` every 30s (5s timeout, 3 retries, 15s start period). It passes while PID 1 has a keepalived child process (the VRRP process, or the LVS checker); the parent alone does not count, and neither does a `genhash` run, which is the same executable but not a child of the daemon. It matches the child's command line, so a `vrrp_process_name` or `checker_process_name` rename still passes. `healthy` means the daemon is up and running the configuration it was given, which is what `depends_on: condition: service_healthy` waits for. `unhealthy` means the daemon is up and no subsystem in its configuration produced a child: a config that parsed but gave keepalived nothing to run, such as an empty file or `global_defs` alone (`keepalived has no configuration to run`), or a child that keeps dying inside its first minute and sits in the parent's growing respawn delay. A config keepalived cannot start on reaches neither state, because keepalived is PID 1 and its exit ends the container: a missing `keepalived.conf` exits 6 before any child starts and logs nothing, a `keepalived.conf` that is present but unreadable, not a regular file, or executable exits 6 after logging the configuration error, and a config the VRRP child rejects, such as one naming an interface the container does not have, ends the parent with exit 2 after `exited with permanent error CONFIG`; `docker ps -a` shows the exit status and the restart count. The probe does not report a stuck VRRP, and a child that dies after running for at least a minute is respawned at once and passes it. The image runs `keepalived --dont-fork --log-console --log-detail`, so every VRRP state transition, track-script success/failure line, and the `Unsafe permissions found ... - disabling` warning lands in `docker logs keepalived` (and any log shipper scraping it); watch there for what the probe cannot see.
-
-Three signals write a dump under `/tmp`, and the state is in two of them. `SIGUSR1` writes `keepalived.data`, with a `State = MASTER|BACKUP|FAULT` line for each instance. `SIGRTMIN+2` writes `keepalived.json`, with `state` and `wantstate` as numbers. `SIGUSR2` writes `keepalived.stats`, which holds counters only (adverts, master transitions, packet and authentication errors) and no state field. `SIGRTMIN` depends on the C library, and in this image it is 35, so the JSON dump is `docker kill -s 37 keepalived`. Read a dump with `docker exec keepalived cat /tmp/keepalived.data`.
-
-## Alerting
-
-keepalived logs VRRP state transitions and config events to its container log (the same stream the [Healthcheck](#healthcheck) section describes shipping to a log collector). Ship it to Loki and evaluate the rules in [`alerts/logql.yaml`](alerts/logql.yaml) with Loki's ruler; firing alerts deliver through your Alertmanager like any Prometheus alert. They cover:
-
-| Alert | Fires when | Severity |
-| --- | --- | --- |
-| `KeepalivedTrackScriptFailed` | a VRRP track script has reported failed or timed out for 3 minutes with no recovery (the rule names the script) | critical |
-| `KeepalivedFaultState` | a VRRP instance has been in FAULT state for 3 minutes and is not rejoining the election (the rule names the instance) | critical |
-| `KeepalivedDuplicateMaster` | two nodes hold the same VRRP address, or this node refused an advert before it could tell: an address-owner conflict and an advert carrying this node's own IP observe the conflict directly, repeated lower-priority adverts observe it from the master's side, and a peer whose adverts this node rejects (an auth password mismatch, an auth type mismatch where neither side is AH, a wrong VRRP version, a VRRPv2 advert-interval mismatch, unicast adverts on a multicast instance or vice versa, a missing or invalid authentication extension, an address outside the `unicast_peer` list, or a TTL or hop-limit failure) | critical |
-| `KeepalivedConfigError` | keepalived kept running after rejecting or ignoring part of the config: an unknown keyword, a `(Line N)`-prefixed parse error, an instance disabled by a config fault, a reload it refused, or an `auth_hmac` `active_key` that names no defined key | warning |
-| `KeepalivedConfigUnusable` | keepalived could not use all or part of its VRRP configuration: a config file it could not open or read, or would not accept as a regular non-executable file, or a config that parsed with nothing to run. An unusable main config exits and crash-loops at startup; a file pulled in by plain `include` is skipped and its directives never apply, at startup as well as on reload, while the rest of the config keeps serving; a file pulled in under `include_check` or an `includer`-family directive is fatal like the main config, and the `(Line N)` prefix on the line is what tells an include from the main file; a main config that does not exist at all is invisible to this rule and shows as the startup crash loop instead | critical |
-| `KeepalivedVIPOperationRefused` | the kernel refused a virtual address, route or rule operation. A refused ADD, or an interface that disappeared, leaves this node advertising as MASTER with the VIP on no node; a refused RELEASE leaves keepalived's record and the kernel's disagreeing, and the errno says which way: EPERM means the matching add was refused too and this node never held the address, an errno naming the object as absent means it was already gone, and any other errno leaves the address on this node while a peer takes ownership | critical |
-| `KeepalivedScriptDisabled` | keepalived refused to run a track or notify script and disabled it: a refused track script means this node never fails over on that check; a refused notify script means the side effect of a state change never runs. The container stays healthy in both cases | critical |
-| `KeepalivedScriptExecFailed` | keepalived forked a track or notify script and could not execute it, which the config-time checks above cannot see: a shebang naming an interpreter the image does not have, or a script on a `noexec` mount. A track script that fails this way is read as having succeeded, so the node keeps the VIP | critical |
-| `KeepalivedPermanentError` | a keepalived child ends with a permanent error (a missing interface, a duplicate `virtual_router_id`) and the parent terminates, so the container crash-loops | critical |
-| `KeepalivedChildRespawned` | a keepalived child process died and was respawned (the log line names which child) | warning |
-| `KeepalivedMemlockFailed` | `mlockall` failed, so `vrrp_no_swap` is inert and the VRRP child can be swapped out | warning |
-
-Thresholds and the `severity` labels are starting points; adjust the container and label selectors (such as the `hostname` grouping) to match your log collector, and route by whatever labels your Alertmanager uses. The two state rules above read the latest status per script and per VRRP instance rather than counting events, so they clear themselves when the recovery line arrives and stay quiet through a restart of a tracked service; raise their `for: 3m` if your tracked service takes longer than that to come back. There is a second way they clear, with no recovery behind it: keepalived logs a track-script result and a VRRP state only when it changes, so once a standing fault is older than the lookback on each rule's `unwrap` the window holds nothing, the rule reports no state, and your Alertmanager receives a resolved notification for a fault that is still there. Read the log before treating a resolve as a recovery; the lookback in [`alerts/logql.yaml`](alerts/logql.yaml) is what sets how long a standing fault keeps paging.
-
-These rules read what keepalived reports about itself, and a completed takeover is in that report. The node that stops logs `(NAME) sent 0 priority`. The survivor logs `(NAME) Backup received priority 0 advertisement` before `Entering MASTER STATE`. A master that loses an election while alive logs `Master received advert from <peer> with higher priority P, ours Q`, or `... with same priority P but higher IP address than ours`. The image passes `--log-detail`, which the two priority-0 lines need, so every line above is in `docker logs keepalived` already.
-
-Only a node that dies outright is silent. The survivor then logs `Entering MASTER STATE` and nothing else, which every boot election logs too, so a rule for that case has to know which node should hold the VIP. That decision is yours, and the rule belongs in your own rule set alongside these.
-
-## Reload without restart
-
-To apply a config change without a container restart (no VIP transition):
-
-```bash
-docker kill -s HUP keepalived
-```
-
-keepalived re-reads `keepalived.conf` and applies any changes. VRRP state is preserved for unchanged instances, and only changed instances briefly renegotiate. Seven settings cannot be changed this way: the top-level `net_namespace`, `net_namespace_ipvs` and `instance`, and the `global_defs` entries `nftables`, `nftables_ipvs`, `tmp_config_directory` and `disable_local_igmp`. keepalived logs `Cannot change ... at a reload - please restart keepalived`; it names its own internal field rather than the directive, so the log text and the spelling you wrote will differ. It then keeps the old configuration and never signals its VRRP child, so every other edit in the file is discarded too. That needs a `docker restart`, and the `KeepalivedConfigError` rule in [`alerts/logql.yaml`](alerts/logql.yaml) catches it.
+The container uses `network_mode: host`, because VRRP adverts are multicast on your LAN segment and a container network would isolate them. If your `keepalived.conf` sets `vrrp_no_swap` or `checker_no_swap`, raise the container's locked-memory limit as [Configuration](docs/configuration.md#locked-memory-for-vrrp_no_swap) shows, or the option does nothing.
 
 ## Security
 
-The container runs as root by design: keepalived adds and removes the VIP on a host interface (`NET_ADMIN`) and constructs raw VRRP packets (`NET_RAW`). Grant those two capabilities with `cap_add` rather than `privileged`, and mount `/etc/keepalived` read-only. That mount is the only bind mount the image needs. One scan finding is accepted: the "image user should not be root" misconfiguration check (AVD-DS-0002), because a non-root user cannot manage the VIP. Current scan results live in the repository's Security tab.
+The container runs as root by design. keepalived needs `NET_ADMIN` to add and remove the virtual IP on a host interface and `NET_RAW` to build VRRP packets. Grant those two with `cap_add` rather than `privileged`. Mount `/etc/keepalived` read-only. It is the only bind mount the image needs, and a writable one would let the container change the scripts keepalived runs as root. Set `enable_script_security` so keepalived refuses any script a non-root user could change. `auth_pass` travels in clear text, so VRRP authentication guards against a misconfigured peer, not an attacker.
 
-keepalived is built from a pinned upstream source release with one [checked-in patch](patches/), applied with `patch -p1 --fuzz=0` so source drift on a version bump fails the build instead of silently shipping an unpatched binary. It restores the diagnostic for a track or notify script that could not be executed: keepalived redirects the child's stderr to `/dev/null` before `execve` and then reports an exec failure through stderr and syslog, neither of which a container has, so a script naming an interpreter the image lacks or living on a `noexec` mount fails with no symptom at all. A track script is the worse half, because the child exits 0 after the failed `execve` and keepalived reads that as the script succeeding, holding the VIP through an outage of the service the script watches. `KeepalivedScriptExecFailed` keys on the diagnostic the patch makes reachable, and `tests/smoke.sh` anchors its three literals against the shipped binary. Drop the patch once a pinned release reports the failure itself; doing so touches the file in `patches/`, its `COPY` and `patch` lines in the `Dockerfile`, this paragraph, the `patches/` exception in the License section, and `KeepalivedScriptExecFailed` together with its three anchor literals and the Alerting table row.
+One scan finding is accepted, AVD-DS-0002 "image user should not be root", because a non-root user cannot manage the virtual IP. The keepalived binary carries one patch, which reports a script keepalived could not execute. It is dropped once a keepalived release reports that failure itself. [Security](docs/security.md) covers the read-only profile, signature checks and what the image contains.
 
-The container root filesystem stays writable, so `read_only: true` is not free. At startup keepalived creates its own pidfile and its VRRP child's pidfile under `/run`. If it cannot create a pidfile, it treats the failure as proof that a second instance runs: on a read-only root it logs `daemon is already running` and exits, and that message names the wrong cause. A tmpfs at `/run` is all the hardened profile needs:
+## Troubleshooting
 
-```yaml
-    read_only: true
-    tmpfs:
-      - /run:size=1m
-```
+The healthcheck passes while keepalived has a child process running, either its VRRP process or its LVS checker. Unhealthy means keepalived is up but has nothing to run, such as an empty file or a file with only `global_defs`. It also means a child process keeps dying within a minute of starting. A config keepalived cannot start on stops the container instead, and `docker ps -a` shows the exit code and the restart count. The probe does not see a stuck VRRP instance, so watch `docker logs keepalived`.
 
-`/tmp` is a separate question. The three signal dumps write there (see [Healthcheck](#healthcheck)). On a read-only root a dump logs that it cannot open its file, such as `Can't open /tmp/keepalived.stats`, and keepalived continues. Add a second tmpfs at `/tmp` only if you use the dumps.
+- `Unsafe permissions found for script ... - disabling`. A folder or script is writable by a non-root user. Repeat step 4 of the quick start.
+- `Configuration file '...' is not a regular non-executable file - skipping`, and the container restarts in a loop. Run `sudo chmod 644 keepalived/keepalived.conf`.
+- `Error exec-ing command '...'`. The script could not start. Its first line names a program the image lacks, such as `bash`, or it sits on a `noexec` mount. keepalived counts that check as passed, so the host keeps the address.
+- `Unable to lock process in memory`, or `Resource temporarily unavailable` and a respawned child. `vrrp_no_swap` needs a higher locked-memory limit.
 
-The image is published with [cosign](https://github.com/sigstore/cosign) signatures and SBOM attestations. Verify a pull:
+[Configuration](docs/configuration.md) and [How it works](docs/how-it-works.md#healthcheck-and-exit-codes) have the detail.
 
-```bash
-cosign verify ghcr.io/cplieger/docker-keepalived:latest \
-    --certificate-identity-regexp '^https://github\.com/cplieger/ci/\.github/workflows/docker-release\.yaml@' \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com
-```
+## Monitoring
 
-## Pairing with radvd for IPv6 HA
+keepalived writes every VRRP state change, check-script result and config error to `docker logs`. Eleven Loki alert rules ship in [`alerts/logql.yaml`](alerts/logql.yaml). [Monitoring and alerts](docs/monitoring.md) lists them, shows how to load them and how to read the current state of each instance.
 
-If you advertise IPv6 prefixes on the LAN with radvd, keepalived can manage the IPv6 VIP and radvd can use it as the source address for Router Advertisements via `AdvRASrcAddress`. See [docker-radvd](https://github.com/cplieger/docker-radvd) for a sibling container that's already wired up for this pattern.
+## Documentation
 
-## Dependencies
-
-Dependencies are updated automatically via [Renovate](https://github.com/renovatebot/renovate). The base image is pinned by SHA digest; keepalived itself is built from a pinned upstream source release whose tarball is SHA256-verified at build time, so a hash mismatch fails the build:
-
-- **Alpine Linux**: base image ([Docker Hub](https://hub.docker.com/_/alpine))
-- **keepalived**: built from the pinned upstream source tarball ([upstream](https://www.keepalived.org/)), with feature parity to Alpine's packaged build (nftables, libnl3, OpenSSL, JSON; no SNMP, no systemd). The build applies the patches in [`patches/`](patches/) to that source first, so the shipped binary is not stock; each patch header says what it changes and when it can be dropped
-
-A new upstream keepalived release triggers a version bump, rebuild, and republish. The Alpine runtime libraries keepalived links against (libnl3, libnftnl, libmnl, OpenSSL) float forward at image build time, and published images are rebuilt automatically once the last successful build exceeds a staleness interval. Operators who need a faster patch response can rebuild or pull on their own cadence, or run a [trivy](https://trivy.dev/) scan of the `:latest` image.
-
-### Migration note: source build (major version)
-
-Earlier image versions installed keepalived from the Alpine community repository (keepalived 2.3.4 on Alpine 3.24). The image now compiles the daemon from the pinned upstream release, which moves it to the current upstream line (2.4.x at the time of this change). The container interface is unchanged: same `/etc/keepalived` read-only bind mount, same capabilities (`NET_ADMIN`, `NET_RAW`), same signals (`HUP` config reload, `USR2` stats dump), and the same `keepalived --dont-fork --log-console --log-detail` PID 1 entrypoint. Review the [upstream changelog](https://github.com/acassen/keepalived/blob/master/ChangeLog) for keepalived 2.4.x behavior changes before rolling it out across an HA pair.
+- [Configuration](docs/configuration.md) covers script permissions, locked memory, reloads and IPv6 router advertisements.
+- [How docker-keepalived works](docs/how-it-works.md) covers the design, what the image runs, the healthcheck and the exit codes.
+- [Monitoring and alerts](docs/monitoring.md) lists the alert rules and the state dumps.
+- [Security](docs/security.md) covers the privilege model, the read-only profile, the patch and image signatures.
 
 ## Credits
 
-This project packages [keepalived](https://github.com/acassen/keepalived) (GPL-2.0) into a container image. All credit for the core functionality goes to the upstream maintainers, Alexandre Cassen and the keepalived community.
+This project packages [keepalived](https://github.com/acassen/keepalived) into a container image. All credit for the daemon goes to its maintainers, Alexandre Cassen and the keepalived community.
 
 ## Contributing
 
-Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) for the layout, the tests and how to run them locally. Please open an issue first for larger changes so the approach can be discussed before implementation.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout and the tests, and open an issue first for a larger change.
 
 ## Disclaimer
 
@@ -256,6 +172,6 @@ This project was built with AI-assisted tooling using [Claude](https://claude.co
 
 Apache-2.0. See [LICENSE](LICENSE). The image carries the license text of every bundled component under `/usr/share/licenses/`. The Alpine packages in the image ship no license file upstream, so their license texts are kept under `licenses/` in this repository and copied in.
 
-The bundled component is keepalived itself, which is GPL-2.0-or-later. The build fetches the pinned release tarball `https://www.keepalived.org/software/keepalived-2.4.3.tar.gz` (`KEEPALIVED_VERSION=v2.4.3`), verifies its SHA256, and applies one checked-in patch, [`patches/0001-report-a-script-that-could-not-be-executed.patch`](patches/0001-report-a-script-that-could-not-be-executed.patch), which is a local modification with no upstream commit behind it and is therefore part of the source the shipped binary is built from. keepalived's own `COPYING` travels in the image at `/usr/share/licenses/keepalived/COPYING`, and the upstream project is [acassen/keepalived](https://github.com/acassen/keepalived). That tarball, this repository's `Dockerfile` and the files in `patches/` are the complete recipe for the binary in the image, which is how anyone who receives it gets the corresponding source.
+The bundled component is keepalived itself, which is GPL-2.0-or-later. The build fetches the pinned release tarball `https://www.keepalived.org/software/keepalived-<version>.tar.gz`, where `<version>` is the `KEEPALIVED_VERSION` build argument in the [`Dockerfile`](Dockerfile) without its leading `v`, verifies its SHA256, and applies one checked-in patch, [`patches/0001-report-a-script-that-could-not-be-executed.patch`](patches/0001-report-a-script-that-could-not-be-executed.patch), which is a local modification with no upstream commit behind it and is therefore part of the source the shipped binary is built from. keepalived's own `COPYING` travels in the image at `/usr/share/licenses/keepalived/COPYING`, and the upstream project is [acassen/keepalived](https://github.com/acassen/keepalived). That tarball, this repository's `Dockerfile` and the files in `patches/` are the complete recipe for the binary in the image, which is how anyone who receives it gets the corresponding source.
 
 `patches/` is an exception. It holds a modification to keepalived's own source, so that file stays GPL-2.0-or-later under upstream's terms. Its header states what it changes and the condition for removing it.
