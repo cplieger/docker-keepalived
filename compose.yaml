@@ -1,4 +1,4 @@
-# Example compose for docker-keepalived. See docs/configuration.md and docs/security.md for all configuration options and hardening.
+# Example compose for docker-keepalived. See docs/configuration.md and docs/hardening.md for all configuration options and hardening.
 services:
   keepalived:
     image: ghcr.io/cplieger/docker-keepalived:latest
