@@ -160,7 +160,7 @@ This project packages [keepalived](https://github.com/acassen/keepalived) into a
 
 ## Contributing
 
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout and the tests, and open an issue first for a larger change.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Disclaimer
 
