@@ -1,49 +1,20 @@
-# Recommended alert rules for docker-keepalived. Loki ruler (LogQL) rule group:
-# ship the container's logs to Loki and evaluate with Loki's ruler; firing
-# alerts deliver through your Alertmanager like any Prometheus alert. Thresholds
-# and the severity labels are starting points; adjust the container and label
-# selectors to your deployment.
-#
-# Each matcher keys on wording from a format string in the pinned keepalived
-# release, but nine do so through a regex rather than a plain substring:
-# TrackScriptFailed binds the status word to its own field with a word
-# boundary, FaultState spans two upstream casings, and DuplicateMaster,
-# ConfigError, PermanentError, ScriptDisabled, ScriptExecFailed,
-# ConfigUnusable and VIPOperationRefused each alternate over several patterns.
-# Read a matcher edit for regex semantics as well as for wording drift.
-# tests/smoke.sh's alert-anchor loop asserts the discriminating literals against
-# the shipped binary; keep the two in step. It cannot anchor the bare status word
-# 'failed' - upstream stores it separately from the format string it lands
-# in, and the binary carries unrelated strings containing it, so a grep for
-# it could never fail. That one word is ungated: re-read it against the
-# sources on a keepalived bump.
-# docs/monitoring.md and docs/configuration.md restate what these rules mean
-# and the operator guidance they depend on (the Alerting table and the
-# surrounding operator sections), and nothing checks the two agree, so an
-# edit here that changes what a rule means, when it fires, or which
-# keepalived directives it talks about is an edit there too.
+# Recommended LogQL alert rules for docker-keepalived, for Loki's ruler.
+# Ship the container's logs to Loki and load this file into Loki's ruler.
+# Firing alerts go through your Alertmanager like any Prometheus alert.
+# Thresholds and severity labels are starting points. Change the container
+# selector and the hostname grouping to the labels your log collector sets.
+# Each matcher keys on log wording from the pinned keepalived release, and
+# tests/smoke.sh checks those strings against the shipped binary.
+# docs/monitoring.md explains each rule and docs/configuration.md the settings
+# they depend on. Nothing checks those pages against this file, so update them
+# with any change to what a rule means or when it fires.
 groups:
   - name: keepalived
     rules:
-      # Both state rules below read the LATEST status per object rather than counting
-      # events, because keepalived logs a track script and a VRRP state only on CHANGE.
-      # A count over a window cannot tell "failed and still failing" from "failed and
-      # recovered", since it sees one line either way, so an event-shaped rule pages on every
-      # rolling redeploy of the tracked service. `last_over_time` on a 0/1 label is
-      # order-aware: the recovery line drives the value back to 0 and the alert clears by
-      # itself, and the `for` window is what a genuine outage has to outlive. The lookback
-      # is the rule's MEMORY of the current state, not a detection window, so it sets
-      # how long a standing fault keeps paging AND when the alert gives up on it: once
-      # the last transition line is older than the lookback the range vector is empty,
-      # the comparison has no series, and the alert resolves with no recovery line
-      # behind it. Raise it to lengthen that memory, against your ruler's max_query_length,
-      # which counts this range for a ruler evaluation and fails it loudly, and its
-      # max_query_lookback, which does not fail it but silently shortens this memory to its
-      # own value; lower it if a container taken out of service mid-fault keeps
-      # paging for too long. 7d is sized for one bound - a fault that starts before a
-      # weekend still pages on Monday - and no finite value makes this memory
-      # indefinite, which is why both descriptions below tell you a resolve may be a
-      # timeout rather than a recovery.
+      # Both state rules read the latest status per object instead of counting
+      # events, because keepalived logs a status only when it changes. The 7d
+      # range is how long the rule remembers a standing fault.
+      # docs/monitoring.md explains how to size it.
       - alert: KeepalivedTrackScriptFailed
         expr: |
           max by (hostname, script) (
@@ -62,18 +33,10 @@ groups:
         annotations:
           summary: "Keepalived track script {{ $labels.script }} failing"
           description: >
-            Keepalived track script {{ $labels.script }} has been failed or timed out for
-            over 3 minutes with no recovery, so the monitored service is genuinely down
-            rather than restarting. A script with no `weight` puts this node into FAULT
-            and out of the VRRP election; a weighted one lowers this node's priority
-            instead, so it may still hold the VIP. Read the state lines beside this one
-            for which happened.
-            A recreate of the tracked container recovers in tens of seconds and is
-            deliberately below this threshold; raise `for` if your service starts slower.
-            This rule remembers the last status for 7 days. If it resolves and you never
-            saw a `succeeded` line for this script, the last failure aged out of that
-            window rather than recovered - read the log before treating the resolve as a
-            recovery.
+            Track script {{ $labels.script }} has failed or timed out for 3
+            minutes, so the service it watches is down. Check that service and
+            this node's VRRP state. A resolve with no succeeded line may not
+            be a recovery.
       - alert: KeepalivedFaultState
         expr: |
           max by (hostname, vrrp_instance) (
@@ -92,22 +55,10 @@ groups:
         annotations:
           summary: "Keepalived instance {{ $labels.vrrp_instance }} stuck in FAULT state"
           description: >
-            VRRP instance {{ $labels.vrrp_instance }} has been in FAULT state for over 3
-            minutes, so this node is out of the VRRP election and holds none of that
-            instance's virtual addresses. Whether a peer took them over is not visible
-            to this rule, which reads only this node's own log; check the peers. Any
-            tracked object can
-            cause it: a failed track script, file or process, the tracked interface going
-            down, or no usable address on it. Check the log lines just before the FAULT
-            for which one it was. Entering BACKUP or MASTER is the recovery, so a brief
-            FAULT during a redeploy resolves itself and does not alert. The matcher is
-            case-insensitive and colon-tolerant on purpose: keepalived spells this
-            "Entering FAULT STATE" for a track-script cause and "entering FAULT state"
-            for an interface, address, tracked-file or tracked-process cause.
-            This rule remembers the last transition for 7 days. If it resolves and you
-            never saw this instance enter BACKUP or MASTER, the FAULT aged out of that
-            window rather than cleared - read the log before treating the resolve as a
-            recovery.
+            Instance {{ $labels.vrrp_instance }} is in FAULT and its addresses
+            are off this node. Check that a peer holds them, then read the
+            lines before the FAULT. A resolve with no BACKUP or MASTER line
+            may not be a recovery.
       - alert: KeepalivedDuplicateMaster
         expr: |
           sum by (hostname) (count_over_time(
@@ -131,59 +82,10 @@ groups:
         annotations:
           summary: "Keepalived reports two masters, or an advert this node refused"
           description: >
-            Two nodes may hold the same VRRP address at the same time, which
-            splits traffic to the VIP between them. The first two legs observe
-            that directly and name the offending peer. The last two observe
-            only that this node REFUSED an advert before reading its fields,
-            which produces the same two masters whenever the sender is a real
-            peer for this virtual_router_id - it never sees that peer's MASTER
-            claim, so it elects itself - and means nothing about ownership when
-            the sender is a stray or spoofed advert from elsewhere. Read the
-            reason on the matched line first. An address-owner conflict logs
-            "CONFIGURATION ERROR ... please resolve". An advert that arrives
-            carrying this node's own address logs an equal-priority advert
-            from a remote host with our IP address. A master that keeps
-            receiving lower-priority adverts logs one line per advert, which
-            is why that leg needs more than 5 lines in 30m: one or two also
-            arrive during a legitimate failback. That count assumes a short
-            advert_int; at the accepted maximum of 255s, 30m carries only
-            about seven adverts, so raise the window or lower the threshold if
-            your advert_int is long. Check auth_pass, virtual_router_id, and
-            whether multicast passes in both directions. A peer whose adverts
-            this node REJECTS produces the same two masters with none of the
-            lines above, because every rejection returns before them.
-            keepalived names the reason once per cause - an auth password
-            mismatch, an auth type mismatch where neither side is AH, a wrong
-            VRRP version, a VRRPv2 advertisement interval mismatch, or unicast
-            adverts on a multicast instance and vice versa - and not again
-            until the instance changes state, so that leg reports the ONSET of
-            the fault rather than the standing fault. Five causes never reach
-            this rule at all: a virtual_router_id mismatch logs nothing unless
-            global_defs sets log_unknown_vrids; a mismatched virtual_ipaddress
-            set is logged without rejecting the advert; an auth_type mismatch
-            where one side uses AH changes the IP protocol number of the
-            adverts, so neither node receives the other's or logs a reason; an
-            address owner running owner_ignore_adverts drops every advert before
-            the address-owner lines above and logs only "Dropping packet(s) ...
-            since we are address owner"; and a checksum rejection, which one
-            node holding v3_checksum_as_v2 or unicast_chksum_compat and its peer
-            not is enough to produce. The checksum line stays unmatched because
-            a single corrupted advert on the wire produces the same "Invalid
-            VRRPv2 checksum" or "Invalid VRRPv3 checksum" line, so matching it
-            would page critical for one bad packet. A third family of rejections
-            never reaches the advert's fields at all, and the fourth leg reports
-            it. With `auth_hmac` configured, a missing, malformed, stale or
-            replayed authentication trailer, an unknown key id or a bad HMAC is
-            refused before any field is read - a clock skewed past `time_window`
-            is enough. With `check_unicast_src` set, or a `min_ttl`/`max_ttl` on
-            a `unicast_peer` line, which sets it, an advert from an address that
-            is not in this instance's `unicast_peer` list is refused, and so is
-            one whose TTL or hop limit falls outside that peer's
-            `min_ttl`/`max_ttl` range. One arm of that leg
-            is not a misconfiguration: a multicast advert whose TTL is not 255
-            was routed or forged, so a match there with none of the config
-            causes above points at the network rather than at either
-            keepalived.conf.
+            Two nodes may hold the same VRRP address and split its traffic.
+            Read the reason on the matched line, then check auth_pass,
+            virtual_router_id and that multicast passes both ways. A refused
+            advert from a non-peer means no conflict.
       - alert: KeepalivedConfigError
         expr: |
           sum by (hostname) (count_over_time(
@@ -201,25 +103,10 @@ groups:
         annotations:
           summary: "Keepalived config error"
           description: >
-            keepalived logged a config error and kept running with it: an
-            unknown keyword (the directive is silently ignored), a "(Line
-            N)"-prefixed parse error such as an invalid directive value, an
-            instance disabled by a config fault such as an interface that
-            cannot do multicast, a reload it refused outright ("Cannot change
-            ... at a reload - please restart keepalived"), which leaves every
-            edit in that file unapplied while the old config keeps serving, or
-            an auth_hmac active_key that names no defined key (keepalived
-            drops the whole authentication extension and the instance runs
-            unauthenticated, so the DuplicateMaster authentication leg cannot
-            report for it). Review your keepalived.conf. The daemon is serving
-            in every case here, which is why this is a warning. A disabled
-            instance is not serving, and its consequence pages separately:
-            every config fault of that kind ends in FAULT state, which
-            KeepalivedFaultState reads at critical. A config keepalived could
-            not read, or one with nothing to run, is
-            KeepalivedConfigUnusable. A script keepalived will not run is
-            KeepalivedScriptDisabled; a config fault that terminates a started
-            child is KeepalivedPermanentError.
+            keepalived logged a config error and kept running. An unknown
+            keyword is ignored, and a refused reload leaves every edit
+            unapplied until a restart. Read the matched line, then review your
+            keepalived.conf.
       - alert: KeepalivedConfigUnusable
         expr: |
           sum by (hostname) (count_over_time(
@@ -236,36 +123,10 @@ groups:
         annotations:
           summary: "Keepalived could not use all or part of its VRRP configuration"
           description: >
-            keepalived could not turn all or part of your config into
-            running VRRP instances. Read the matched line and identify the
-            object it names, because the scope differs.
-            The MAIN config is fatal: if keepalived cannot open or read it,
-            or will not treat it as a regular non-executable file,
-            it exits before any child starts, so the container crash-loops,
-            the healthcheck never reports healthy, and
-            KeepalivedPermanentError stays silent because no child died.
-            Those lines carry no "(Line N)" prefix.
-            A main config that does not exist at all - an empty or missing mount -
-            is the one unusable-config case this rule cannot see: keepalived exits 6
-            the same way but logs only its start and stop banners, so the crash loop
-            is the signal.
-            An INCLUDED file is partial: a file pulled in by plain
-            `include` that keepalived cannot use is skipped, its directives
-            never apply, and the rest of the config keeps serving - at
-            startup exactly as on a reload. A file pulled in under
-            `global_defs include_check` or by an `includer`-family
-            directive is fatal at startup like the main config instead.
-            Those lines carry a "(Line N)" prefix naming the line the
-            include sits on.
-            "has no configuration to run" is the third case: the config
-            parsed but no subsystem in it produced a child, an empty file or
-            a global_defs block alone being the usual shape, so the daemon is
-            up and idle with no child process, nothing crashes, and the
-            healthcheck reports unhealthy once its retries are spent.
-            Check your keepalived.conf, its includes and their modes -
-            keepalived will not use a config file that is not a regular
-            file or that has an execute bit set - and then read the VIP
-            state of whatever the line named.
+            keepalived could not use all or part of your config. An unreadable
+            main config crash-loops the container, a skipped include drops
+            that file, and a config with nothing to run leaves keepalived
+            idle. Check the named file and its mode.
       - alert: KeepalivedScriptDisabled
         expr: |
           sum by (hostname) (count_over_time({container="keepalived"} |~ "script.*- disabling|Disabling track script|Wrong file type found in script path|cannot be accessed - " [15m])) > 0
@@ -275,24 +136,10 @@ groups:
         annotations:
           summary: "Keepalived refused to run a track or notify script"
           description: >
-            keepalived would not run a script and disabled it. Which failover
-            guarantee that breaks depends on the script's ROLE, and most of the
-            matched lines do not say: the same permission and lookup checks
-            refuse a track_script and a notify_master/backup/fault script
-            alike. Only "Disabling track script" is unambiguous. A refused
-            TRACK script means the object it tracked is never evaluated, so
-            this node's priority never drops and it keeps the VIP through an
-            outage of the very service the script was installed to watch. A
-            refused NOTIFY script means the transition still happens but the
-            side effect the operator attached to it does not - an address or
-            route the new MASTER was supposed to install never appears.
-            Identify the script named in the line before acting. Nothing else
-            reports either state: the daemon runs, VRRP works, and the
-            healthcheck stays green. The usual cause is path permissions under
-            enable_script_security. See docs/configuration.md, section Script
-            permissions under enable_script_security. The rule also fires
-            for a script keepalived cannot find, cannot execute as its
-            run-as user, or cannot set uid/gid for.
+            keepalived refused to run a script and disabled it. A refused
+            track script never fails this node over, and a refused notify
+            script skips its side effect. The healthcheck stays green. Check
+            the named script's permissions under enable_script_security.
       - alert: KeepalivedScriptExecFailed
         expr: |
           sum by (hostname) (count_over_time(
@@ -305,19 +152,10 @@ groups:
         annotations:
           summary: "Keepalived could not execute a track or notify script"
           description: >
-            keepalived forked a child for a track or notify script and the exec
-            failed, so the script never ran. The line names the path. Nothing
-            keepalived checks while reading the config can see this one, which
-            is why KeepalivedScriptDisabled does not report it: the path, the
-            owner and the permissions are all in order and the program behind
-            them is not. The two usual causes are a shebang naming an
-            interpreter the image does not ship, and a script on a filesystem
-            mounted noexec. For a TRACK script the consequence is inverted and
-            worse than a refusal: the child exits 0, which keepalived reads as
-            the check succeeding, so it logs VRRP_Script(name) succeeded and
-            this node keeps the VIP through an outage of the very service the
-            script watches. For a NOTIFY script the transition still happens
-            and the side effect attached to it does not.
+            keepalived could not execute the track or notify script the line
+            names. A track script that fails this way counts as succeeded, so
+            this node keeps the virtual IP. Check the script's interpreter
+            line and whether its mount is noexec.
       - alert: KeepalivedPermanentError
         expr: |
           sum by (hostname) (count_over_time(
@@ -330,17 +168,10 @@ groups:
         annotations:
           summary: "Keepalived hit a permanent error and terminated"
           description: >
-            A keepalived child ended with a permanent error, so the parent
-            logged "exited with permanent error CONFIG" (also FATAL, or
-            missing permission) and terminated too. The container exits and
-            the restart policy crash-loops it, so this node holds no VIP at
-            all. That one line covers the whole class: an interface named in
-            the config that does not exist on the host, two VRRP instances
-            that share a virtual_router_id on one interface, and any other
-            config the daemon refuses outright. KeepalivedChildRespawned
-            cannot fire for these, because the parent terminates instead of
-            respawning the child. Read the error logged just before the
-            terminal line for the cause.
+            A keepalived child ended with a permanent error and the parent
+            stopped, so the container restarts in a loop and this node holds
+            no virtual IP. Read the error logged just before the "exited with
+            permanent error" line.
       - alert: KeepalivedChildRespawned
         expr: |
           sum by (hostname) (count_over_time({container="keepalived"} |= "died: Respawning" [15m])) > 0
@@ -350,20 +181,10 @@ groups:
         annotations:
           summary: "Keepalived child process died and was respawned"
           description: >
-            A keepalived child process died and the parent respawned it; the log
-            line names which child. For the VRRP child, a respawn while it was
-            MASTER moves its virtual IPs off this node and back, stranding every
-            long-lived connection through it. A respawn while it was BACKUP does
-            not by itself show any ownership change; read the preceding state lines
-            to see which happened. For the Healthcheck child, the VIPs stay put and
-            only LVS real-server checking paused. A child that had run for at
-            least a minute is respawned at once, before the next probe, so the
-            container healthcheck normally stays green and this alert is the
-            only report of the death. A child that keeps dying inside its first
-            minute is restarted with a growing delay of up to 60 seconds and can
-            turn the healthcheck unhealthy; this alert fires on every death
-            either way. Check the log lines just before this one for the child's
-            exit status.
+            The keepalived child the line names died and was respawned. A VRRP
+            child that was MASTER moved the virtual IPs off this node and
+            back, which breaks long-lived connections. Read the lines before
+            this one for the exit status.
       - alert: KeepalivedMemlockFailed
         expr: |
           sum by (hostname) (count_over_time({container="keepalived"} |= "Unable to lock process in memory" [15m])) > 0
@@ -371,16 +192,12 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Keepalived could not lock memory (vrrp_no_swap inert)"
+          summary: "Keepalived could not lock memory, so vrrp_no_swap is inert"
           description: >
-            keepalived's config asks for vrrp_no_swap (or checker_no_swap) but
-            mlockall failed, so the option is inert for the
-            life of this process and the child can be swapped out. keepalived
-            appends the errno to that log line: read it, then check both the
-            container's locked-memory limit (RLIMIT_MEMLOCK, see docs/configuration.md
-            "Locked memory for vrrp_no_swap") and whether the container has CAP_IPC_LOCK.
-            keepalived logs this once at startup and carries on, so nothing
-            else reports it.
+            mlockall failed, so vrrp_no_swap or checker_no_swap is inert and
+            the child can be swapped out. keepalived logs this once at
+            startup. Read the error on the line, then check the container's
+            memlock limit and CAP_IPC_LOCK.
       - alert: KeepalivedVIPOperationRefused
         expr: |
           sum by (hostname) (count_over_time(
@@ -394,37 +211,7 @@ groups:
         annotations:
           summary: "Keepalived could not add or release a virtual address, route or rule"
           description: >
-            keepalived asked the kernel to add or to release a virtual
-            address, route or rule and the kernel refused. Read the netlink
-            message type on the matched line first: the two directions mean
-            opposite things, and keepalived carries on as though the
-            operation succeeded either way.
-            An RTM_NEW refusal, or the "Not adding address" form, is a failed
-            ADD on becoming master. keepalived logs "Entering MASTER STATE"
-            before it makes the request and marks the instance's addresses as
-            set whichever answer comes back, so it does not ask again: this
-            node goes on advertising as MASTER and winning the election while
-            the VIP is on no node at all, and notify_master has already run.
-            An RTM_DEL refusal is a failed RELEASE on leaving master.
-            keepalived has already logged "Entering BACKUP STATE" or "Entering
-            FAULT STATE" and clears its own record of the addresses regardless,
-            so its record and the kernel's now disagree. Which way they disagree
-            is in the errno, and only one way is a conflict. EPERM means the
-            operation was refused for the capability, so the matching ADD was
-            refused too and this instance never held the address; the RTM_NEW
-            line above it is the real signal. An errno naming the object as absent
-            means it was already gone and no peer is in conflict. Any other errno
-            leaves the address, route or rule on THIS node while a peer takes
-            ownership, which is the case KeepalivedDuplicateMaster reads from the
-            other side.
-            Nothing else reports either case. No track script failed, no
-            instance is in FAULT for the add case, and the healthcheck
-            stays green, because the daemon is doing exactly what it was
-            told. The usual cause is a container without NET_ADMIN: the raw
-            VRRP socket needs only NET_RAW, so keepalived starts, elects and
-            adverts normally and only the address operation is refused (see
-            the README "Configuration reference"). The other cause is an interface that went
-            away after the config was read, which logs the "Not adding
-            address" form and names the interface. The line carries the errno
-            and the netlink message type; read it, then check the container's
-            capabilities and the interface the instance names.
+            The kernel refused to add or release a virtual address, route or
+            rule, and keepalived carried on as if it worked. A refused add
+            leaves the virtual IP on no node. Check the container's NET_ADMIN
+            capability and the named interface.
