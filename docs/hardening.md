@@ -30,13 +30,7 @@ The patch restores the report for a track or notify script that could not be exe
 
 ## Verifying the image
 
-The image is published with [cosign](https://github.com/sigstore/cosign) signatures and SBOM attestations. Verify a pull with:
-
-```bash
-cosign verify ghcr.io/cplieger/docker-keepalived:latest \
-    --certificate-identity-regexp '^https://github\.com/cplieger/ci/\.github/workflows/docker-release\.yaml@' \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com
-```
+The image is signed with cosign and carries a signed software bill of materials. [Checking a signature](https://github.com/cplieger/docs/blob/main/docs/images.md#checking-a-signature) and [Reading the software bill of materials](https://github.com/cplieger/docs/blob/main/docs/images.md#reading-the-software-bill-of-materials) show how to check both, with `docker-keepalived` as the app name.
 
 ## What the image contains
 

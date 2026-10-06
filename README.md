@@ -31,7 +31,7 @@ docker-keepalived is free software under the Apache-2.0 license. keepalived itse
 
 ## Quick start
 
-The image is on GitHub Container Registry and Docker Hub, for `amd64` and `arm64`. This is the [`compose.yaml`](compose.yaml) in this repository. Besides `latest`, each release is tagged with its full, minor and major version, such as `v2.4.0`, `v2.4` and `v2`, so every host can run the same release. These are the image's own version numbers, separate from the keepalived version inside it.
+The image is on GitHub Container Registry and Docker Hub, for `amd64` and `arm64`. This is the [`compose.yaml`](compose.yaml) in this repository. Besides `latest`, each release is [tagged](https://github.com/cplieger/docs/blob/main/docs/images.md#which-tag-to-use) with its full, minor and major version, such as `v2.4.0`, `v2.4` and `v2`, so every host can run the same release. These are the image's own version numbers, separate from the keepalived version inside it.
 
 ```yaml
 services:
