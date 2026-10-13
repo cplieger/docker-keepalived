@@ -1,6 +1,6 @@
 # Configuration
 
-This page covers script permissions, config file checks, locked memory, reloads, multicast and IPv6 router advertisements. It is for readers who have the quick start running and write their own `keepalived.conf` for this image.
+This page covers script permissions, config file checks, locked memory, realtime scheduling, reloads, multicast and IPv6 router advertisements. It is for readers who have the quick start running and write their own `keepalived.conf` for this image.
 
 ## Where settings live
 
@@ -76,6 +76,25 @@ docker exec keepalived grep 'Max locked memory' /proc/1/limits
 ```
 
 Size the limit with one more fact in mind. keepalived's interface table gains an entry for every interface the host has ever had and does not release it, as [keepalived issue #2709](https://github.com/acassen/keepalived/issues/2709) describes. Every container start on the host creates a veth interface. On a busy host a finite limit sets how long the child lives rather than preventing the exit. Headroom buys time and is not a cure.
+
+## Realtime scheduling
+
+keepalived can run its VRRP and checker processes under realtime scheduling, so other work on a busy host cannot delay their adverts and checks. Three `global_defs` keywords ask for it. `vrrp_rt_priority` and `checker_rt_priority` switch a process to realtime at startup. `max_auto_priority` switches it the first time one of its timers fires late, which happens under heavy load. `vrrp_rlimit_rttime` and `checker_rlimit_rttime` limit how long a realtime process may use the CPU without waiting, and apply only once it runs realtime.
+
+Realtime scheduling needs the `SYS_NICE` capability. Add it to the service in `compose.yaml`:
+
+```yaml
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+```
+
+Without `SYS_NICE`, each switch keepalived tries fails with one `child process: cannot raise priority` line, and the process runs at normal priority. VRRP and the checks keep working. `vrrp_rt_priority` and `checker_rt_priority` try the switch at startup and on each reload. `max_auto_priority` tries it at the first late timer after a start or a reload.
+
+`vrrp_priority` and `checker_priority` set a nice value instead, which is the ordinary priority the scheduler weighs. A positive value lowers the priority and needs no capability. A negative value raises it and needs `SYS_NICE`. Without it keepalived logs `Unable to set process priority to -10 - Permission denied`, with your value in place of -10, and keeps the default.
+
+The image patches keepalived so realtime scheduling works. Unpatched keepalived cannot switch to realtime on Alpine's C library. On any C library, its first track, notify or `MISC_CHECK` script run would also move the process back to normal scheduling. [Security](hardening.md#the-keepalived-patches) describes both patches.
 
 ## Reloading without a restart
 
