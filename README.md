@@ -16,13 +16,13 @@ docker-keepalived keeps one address reachable while a host, or a service on it, 
 
 ## Who it is for
 
-docker-keepalived is built for admins who already write keepalived configurations and want keepalived in a container. It runs a pinned official keepalived release, patched so a check script that cannot start shows in the log.
+docker-keepalived is for admins who already write keepalived configurations and want keepalived in a container. It runs a pinned official keepalived release, patched so a check script that cannot start is logged and realtime scheduling works.
 
 You need two or more Linux hosts with Docker on one network, on `amd64` or `arm64`. The container runs as root with host networking and the `NET_ADMIN` and `NET_RAW` capabilities.
 
 Three other options suit other setups:
 
-- Consider your distribution's keepalived package to run it on the host itself, which its maintainers call the quickest install.
+- Consider your distribution's keepalived package to run it on the host, which its maintainers call the quickest install.
 - Consider [osixia/keepalived](https://github.com/osixia/container-keepalived) if you want the configuration generated from environment variables.
 - Consider [kube-vip](https://kube-vip.io/) if you want a virtual IP for a Kubernetes control plane or LoadBalancer services.
 
@@ -123,14 +123,15 @@ Every setting lives in `keepalived.conf`. The image reads no environment variabl
 | --- | --- |
 | `NET_ADMIN` | Adding and removing the virtual IP, and setting socket options |
 | `NET_RAW` | Building VRRP packets on raw sockets, and ICMP probes |
+| `SYS_NICE` | Optional. Only for realtime scheduling, which `vrrp_rt_priority`, `checker_rt_priority` and `max_auto_priority` ask for, or a negative `vrrp_priority` or `checker_priority` |
 
-The container uses `network_mode: host`, because VRRP adverts are multicast on your LAN segment and a container network would isolate them. If your `keepalived.conf` sets `vrrp_no_swap` or `checker_no_swap`, raise the container's locked-memory limit as [Configuration](docs/configuration.md#locked-memory-for-vrrp_no_swap) shows, or the option does nothing.
+The container uses `network_mode: host`, because VRRP adverts are multicast on your LAN segment and a container network would isolate them. If your `keepalived.conf` sets `vrrp_no_swap` or `checker_no_swap`, raise the container's locked-memory limit as [Configuration](docs/configuration.md#locked-memory-for-vrrp_no_swap) shows, or the option does nothing. If it asks for realtime scheduling, add `SYS_NICE` as [Configuration](docs/configuration.md#realtime-scheduling) shows. Without it keepalived logs a warning and runs at normal priority.
 
 ## Security
 
 The container runs as root by design. keepalived needs `NET_ADMIN` to add and remove the virtual IP on a host interface and `NET_RAW` to build VRRP packets. Grant those two with `cap_add` rather than `privileged`. Mount `/etc/keepalived` read-only. It is the only bind mount the image needs, and a writable one would let the container change the scripts keepalived runs as root. Set `enable_script_security` so keepalived refuses any script a non-root user could change. `auth_pass` travels in clear text, so VRRP authentication guards against a misconfigured peer, not an attacker.
 
-One scan finding is accepted, AVD-DS-0002 "image user should not be root", because a non-root user cannot manage the virtual IP. The keepalived binary carries one patch, which reports a script keepalived could not execute. It is dropped once a keepalived release reports that failure itself. [Security](docs/hardening.md) covers the read-only profile, signature checks and what the image contains.
+One scan finding is accepted, AVD-DS-0002 "image user should not be root", because a non-root user cannot manage the virtual IP. Two patches fix keepalived's report of a script it could not execute, its realtime scheduling and its handling of a signal that kills a script. [Security](docs/hardening.md) covers the patches, the read-only profile, signature checks and what the image contains.
 
 ## Troubleshooting
 
@@ -140,6 +141,7 @@ The healthcheck passes while keepalived has a child process running, either its 
 - `Configuration file '...' is not a regular non-executable file - skipping`, and the container restarts in a loop. Run `sudo chmod 644 keepalived/keepalived.conf`.
 - `Error exec-ing command '...'`. The script could not start. Its first line names a program the image lacks, such as `bash`, or it sits on a `noexec` mount. keepalived counts that check as passed, so the host keeps the address.
 - `Unable to lock process in memory`, or `Resource temporarily unavailable` and a respawned child. `vrrp_no_swap` needs a higher locked-memory limit.
+- `child process: cannot raise priority`. Your config asks for realtime scheduling and the container lacks `SYS_NICE`. keepalived carries on at normal priority. Add the capability, or remove the realtime keywords.
 
 [Configuration](docs/configuration.md) and [How it works](docs/how-it-works.md#healthcheck-and-exit-codes) have the detail.
 
@@ -149,10 +151,10 @@ keepalived writes every VRRP state change, check-script result and config error 
 
 ## Documentation
 
-- [Configuration](docs/configuration.md) covers script permissions, locked memory, reloads and IPv6 router advertisements.
+- [Configuration](docs/configuration.md) covers script permissions, locked memory, realtime scheduling, reloads and IPv6 router advertisements.
 - [How docker-keepalived works](docs/how-it-works.md) covers the design, what the image runs, the healthcheck and the exit codes.
 - [Monitoring and alerts](docs/monitoring.md) lists the alert rules and the state dumps.
-- [Security](docs/hardening.md) covers the privilege model, the read-only profile, the patch and image signatures.
+- [Security](docs/hardening.md) covers the privilege model, the read-only profile, the patches and image signatures.
 
 ## Credits
 
@@ -172,8 +174,9 @@ This project was built with AI-assisted tooling using [Claude](https://claude.co
 
 Apache-2.0. See [LICENSE](LICENSE). The image carries the license text of every bundled component under `/usr/share/licenses/`. The Alpine packages in the image ship no license file upstream, so their license texts are kept under `licenses/` in this repository and copied in.
 
-The bundled component is keepalived itself, which is GPL-2.0-or-later. The build fetches the pinned release tarball `https://www.keepalived.org/software/keepalived-<version>.tar.gz`, at the version the `KEEPALIVED_VERSION` argument in the [`Dockerfile`](Dockerfile) pins without its leading `v`, verifies the pinned SHA256, and applies the checked-in patch below. keepalived's own `COPYING` travels in the image at `/usr/share/licenses/keepalived/COPYING`, and the upstream project is [acassen/keepalived](https://github.com/acassen/keepalived). That tarball, this repository's `Dockerfile` and the patch are the complete recipe for the keepalived binary in the image, which is how anyone who receives it gets the corresponding source.
+The bundled component is keepalived itself, which is GPL-2.0-or-later. The build fetches the pinned release tarball `https://www.keepalived.org/software/keepalived-<version>.tar.gz`, at the version the `KEEPALIVED_VERSION` argument in the [`Dockerfile`](Dockerfile) pins without its leading `v`, verifies the pinned SHA256, and applies the checked-in patches below. keepalived's own `COPYING` travels in the image at `/usr/share/licenses/keepalived/COPYING`, and the upstream project is [acassen/keepalived](https://github.com/acassen/keepalived). That tarball, this repository's `Dockerfile` and the patches are the complete recipe for the keepalived binary in the image, which is how anyone who receives it gets the corresponding source.
 
-The patch changes keepalived's own source, so it stays GPL-2.0-or-later:
+The patches change keepalived's own source, so they stay GPL-2.0-or-later:
 
 - [`patches/0001-report-a-script-that-could-not-be-executed.patch`](patches/0001-report-a-script-that-could-not-be-executed.patch) is a local change with no upstream commit behind it.
+- [`patches/0002-make-realtime-scheduling-work-and-keep-it.patch`](patches/0002-make-realtime-scheduling-work-and-keep-it.patch) is a local change with no upstream commit behind it. Its fix for a script's pid is the change in upstream [pull request #2733](https://github.com/acassen/keepalived/pull/2733), and its other two fixes are upstream [pull request #2736](https://github.com/acassen/keepalived/pull/2736). Neither is merged yet.
