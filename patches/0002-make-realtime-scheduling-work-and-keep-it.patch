@@ -36,11 +36,10 @@ Moving to realtime still needs CAP_SYS_NICE. Without it each switch fails
 with one "cannot raise priority" line and the process runs at normal
 priority.
 
-The our_pid fix is upstream pull request
-https://github.com/acassen/keepalived/pull/2733. The musl and bookkeeping
-fixes are proposed upstream in
-https://github.com/acassen/keepalived/pull/2736. Drop this patch once a
-pinned release carries all three fixes.
+Upstream merged all three after 2.4.3: the our_pid fix in
+https://github.com/acassen/keepalived/pull/2733, the musl and bookkeeping
+fixes in https://github.com/acassen/keepalived/pull/2736 (master 175d268a).
+Drop this patch once a pinned release carries them.
 
 --- a/lib/notify.c
 +++ b/lib/notify.c
