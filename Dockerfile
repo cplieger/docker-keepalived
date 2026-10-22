@@ -5,7 +5,7 @@ ARG KEEPALIVED_VERSION=v2.4.3
 # repin: dep=acassen/keepalived url=https://www.keepalived.org/software/keepalived-{version_nov}.tar.gz
 ARG KEEPALIVED_SHA256=a0faef8e401c143487b131b526df7541c1e33d9b8814642fa9dfe8bb250a9632
 
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS builder
+FROM alpine:3.24.3@sha256:1b7232cda4ca3dc20b5d1247bdc9bfb631f2661d15d323bdd6fccc035ed1a9e7 AS builder
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
@@ -72,7 +72,7 @@ EOF
 
 COPY LICENSE NOTICE /out/usr/share/licenses/docker-keepalived/
 
-FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS base
+FROM alpine:3.24.3@sha256:1b7232cda4ca3dc20b5d1247bdc9bfb631f2661d15d323bdd6fccc035ed1a9e7 AS base
 
 # The `echo` is load-bearing: BuildKit keys a RUN on the args it CONSUMES, so a
 # merely-declared PKG_REFRESH would not bust this layer's cache.
