@@ -157,6 +157,168 @@ else
   log "note: KEEPALIVED_EXPECTED_VERSION unset - skipping script-exec report check (local run)"
 fi
 
+# A stall makes max_auto_priority try to move the VRRP child to realtime, which
+# fails here: a build step has no CAP_SYS_NICE. patches/ must leave exactly one
+# "cannot raise priority". Unpatched keepalived also logs "Set realtime priority"
+# and then a "cannot reset realtime scheduling" line from every script child.
+if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ] && [ -n "$iface" ]; then
+  rt_dir=$(mktemp -d /root/smoke-rt.XXXXXX)
+  trap 'rm -f "$conf" "$bad"; rm -rf "$exec_dir" "$rt_dir"' EXIT
+  rt_conf="$rt_dir/vrrp.conf"
+  rt_log="$rt_dir/keepalived.log"
+  chmod 755 "$rt_dir"
+  # Each run of the track script leaves one file, so runs can be counted.
+  printf '%s\n' \
+    'global_defs {' \
+    '    enable_script_security' \
+    '    script_user root' \
+    '    max_auto_priority' \
+    '    min_auto_priority_delay 500000' \
+    '}' \
+    'vrrp_script chk_rt {' \
+    "    script \"/bin/mktemp $rt_dir/run.XXXXXX\"" \
+    '    interval 1' \
+    '}' \
+    'vrrp_instance VI_RT {' \
+    '    state BACKUP' \
+    "    interface $iface" \
+    '    virtual_router_id 254' \
+    '    priority 100' \
+    '    advert_int 1' \
+    '    virtual_ipaddress {' \
+    '        192.168.255.250/24' \
+    '    }' \
+    '    track_script {' \
+    '        chk_rt' \
+    '    }' \
+    '}' >"$rt_conf"
+  chmod 0644 "$rt_conf"
+  rt_runs() {
+    n=0
+    for f in "$rt_dir"/run.*; do
+      [ -e "$f" ] && n=$((n + 1))
+    done
+    printf '%s\n' "$n"
+  }
+  rt_wait_runs() {
+    i=0
+    while [ "$i" -lt 20 ]; do
+      [ "$(rt_runs)" -ge "$1" ] && return 0
+      i=$((i + 1))
+      sleep 1
+    done
+    return 1
+  }
+  rt_count() { grep -cF -- "$1" "$rt_log" || true; }
+  keepalived --dont-fork --log-console --log-detail -f "$rt_conf" >"$rt_log" 2>&1 &
+  ka_pid=$!
+  rt_ok=1
+  if ! rt_wait_runs 1; then
+    err "FAIL: the realtime check's track script never ran"
+    rt_ok=0
+  elif ! vrrp_pid=$(pgrep -P "$ka_pid") || [ -z "$vrrp_pid" ]; then
+    err "FAIL: the realtime check found no VRRP child of keepalived"
+    rt_ok=0
+  else
+    kill -STOP "$vrrp_pid"
+    sleep 3
+    kill -CONT "$vrrp_pid"
+    runs_after_stall=$(rt_runs)
+    if ! rt_wait_runs $((runs_after_stall + 5)); then
+      err "FAIL: the track script did not run 5 more times after the stall"
+      rt_ok=0
+    fi
+  fi
+  kill "$ka_pid" 2>/dev/null || true
+  wait "$ka_pid" 2>/dev/null || true
+  if [ "$rt_ok" -eq 1 ]; then
+    # Without the stall line the auto-priority path never ran and every count
+    # below would hold for any binary.
+    if [ "$(rt_count 'A thread timer expired')" -eq 0 ]; then
+      err "FAIL: a 3s stop of the VRRP child was not reported as a late timer"
+      rt_ok=0
+    elif [ "$(rt_count 'cannot raise priority')" -ne 1 ] \
+      || [ "$(rt_count 'Set realtime priority')" -ne 0 ] \
+      || [ "$(rt_count 'cannot reset realtime scheduling')" -ne 0 ]; then
+      err "FAIL: a failed realtime switch was not reported as exactly one 'cannot raise priority'"
+      rt_ok=0
+    fi
+  fi
+  if [ "$rt_ok" -eq 0 ]; then
+    err "$(cat "$rt_log")"
+    fail=1
+  fi
+else
+  log "note: KEEPALIVED_EXPECTED_VERSION unset - skipping realtime fallback check (local run)"
+fi
+
+# keepalived runs a script line starting "</" through system(), and when a
+# signal kills that shell the script child passes the signal on with
+# kill(our_pid). Unpatched, our_pid still names the VRRP child, so SIGTERM stops
+# it and the parent respawns it after every run. patches/ must keep the one VRRP
+# child and log the script as failed by the signal.
+if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ] && [ -n "$iface" ]; then
+  sig_dir=$(mktemp -d /root/smoke-sig.XXXXXX)
+  trap 'rm -f "$conf" "$bad"; rm -rf "$exec_dir" "$rt_dir" "$sig_dir"' EXIT
+  sig_conf="$sig_dir/vrrp.conf"
+  sig_log="$sig_dir/keepalived.log"
+  chmod 755 "$sig_dir"
+  printf '%s\n' \
+    'global_defs {' \
+    '    enable_script_security' \
+    '    script_user root' \
+    '}' \
+    'vrrp_script chk_sig {' \
+    "    script \"'</dev/null;/bin/mktemp $sig_dir/run.XXXXXX;kill -TERM \$\$'\"" \
+    '    interval 1' \
+    '}' \
+    'vrrp_instance VI_SIG {' \
+    '    state BACKUP' \
+    "    interface $iface" \
+    '    virtual_router_id 252' \
+    '    priority 100' \
+    '    advert_int 1' \
+    '    virtual_ipaddress {' \
+    '        192.168.255.249/24' \
+    '    }' \
+    '    track_script {' \
+    '        chk_sig' \
+    '    }' \
+    '}' >"$sig_conf"
+  chmod 0644 "$sig_conf"
+  sig_runs() {
+    n=0
+    for f in "$sig_dir"/run.*; do
+      [ -e "$f" ] && n=$((n + 1))
+    done
+    printf '%s\n' "$n"
+  }
+  sig_count() { grep -cF -- "$1" "$sig_log" || true; }
+  keepalived --dont-fork --log-console --log-detail -f "$sig_conf" >"$sig_log" 2>&1 &
+  ka_pid=$!
+  i=0
+  while [ "$i" -lt 20 ] && [ "$(sig_runs)" -lt 3 ]; do
+    i=$((i + 1))
+    sleep 1
+  done
+  sig_n=$(sig_runs)
+  sig_children=$(sig_count 'Starting VRRP child process')
+  sig_failed=$(sig_count 'VRRP_Script(chk_sig) failed (due to signal 15)')
+  kill "$ka_pid" 2>/dev/null || true
+  wait "$ka_pid" 2>/dev/null || true
+  if [ "$sig_n" -lt 3 ]; then
+    err "FAIL: the signal check's track script ran $sig_n times, want 3"
+    err "$(cat "$sig_log")"
+    fail=1
+  elif [ "$sig_children" -ne 1 ] || [ "$sig_failed" -eq 0 ]; then
+    err "FAIL: a script shell killed by SIGTERM started $sig_children VRRP children, want 1, and was logged as failed by the signal $sig_failed times, want at least 1"
+    err "$(cat "$sig_log")"
+    fail=1
+  fi
+else
+  log "note: KEEPALIVED_EXPECTED_VERSION unset - skipping script signal check (local run)"
+fi
+
 if [ -n "${KEEPALIVED_EXPECTED_VERSION:-}" ]; then
   sbom=/usr/share/sbom/keepalived.cdx.json
   expected=${KEEPALIVED_EXPECTED_VERSION#v}
