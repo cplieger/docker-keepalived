@@ -1,6 +1,14 @@
 # Monitoring and alerts
 
-This page covers what keepalived writes to its log, how to read the current state of each instance and the alert rules that ship with the image. It is for operators who send container logs to Loki or watch them by hand.
+This page covers what keepalived writes to its log, how to read the current state of each instance and the alert rules that ship with the image. It also shows the outside probe that watches the virtual IP. keepalived's own log is where it reports a fault, so the image ships log alert rules and no metrics page.
+
+## What you get
+
+| You run | You get | You set up |
+| --- | --- | --- |
+| Loki and Alertmanager, no metric store | All 11 alert rules | A log collector for the container, and [`alerts/logql.yaml`](../alerts/logql.yaml) loaded into Loki's ruler |
+| Prometheus, Mimir or VictoriaMetrics, with Alertmanager (the monitoring guide's starting stack adds Loki) | The [example probe rule](#knowing-the-app-is-alive) for the virtual IP, and with a third-party exporter each instance's state as metrics | A probe of the virtual IP, and the exporter if you want it |
+| Docker or Unraid only | The restart policy, `docker logs`, Docker health, and keepalived's own email on each state change if you configure it | An SMTP server for keepalived's email |
 
 ## What keepalived logs
 
@@ -18,9 +26,11 @@ Three signals write a dump under `/tmp`, and two of them hold the state:
 
 `SIGRTMIN` depends on the C library, and in this image it is 35, so the JSON dump is `docker kill -s 37 keepalived`. Read a dump with `docker exec keepalived cat /tmp/keepalived.data`.
 
+keepalived has no metrics page. Consider [mehdy/keepalived-exporter](https://github.com/mehdy/keepalived-exporter) if you want its state as metrics. It sends the dump signals through the Docker socket and reads the dumps from a `/tmp` volume it shares with this container. The Docker socket gives it control of every container on the host. No rule in `alerts/` reads its series.
+
 ## Alerting
 
-Load the rules in [`alerts/logql.yaml`](../alerts/logql.yaml) into Loki's ruler, as [Loading an app's alert rules](https://github.com/cplieger/docs/blob/main/docs/monitoring.md#loading-an-apps-alert-rules) shows. They cover:
+`alerts/logql.yaml` is the only rule file, because every condition below exists only as a keepalived log line. Load it into Loki's ruler, as [Loading an app's alert rules](https://github.com/cplieger/docs/blob/main/docs/monitoring.md#loading-an-apps-alert-rules) shows. It covers:
 
 | Alert | Fires when | Severity |
 | --- | --- | --- |
@@ -36,7 +46,7 @@ Load the rules in [`alerts/logql.yaml`](../alerts/logql.yaml) into Loki's ruler,
 | `KeepalivedChildRespawned` | a child process died and was respawned. The log line names which child | warning |
 | `KeepalivedMemlockFailed` | `mlockall` failed, so `vrrp_no_swap` is inert and the VRRP child can be swapped out | warning |
 
-Thresholds and the `severity` labels are starting points. Change the `container` selector and the `hostname` grouping to the labels your log collector sets, and route by whatever labels your Alertmanager uses.
+Thresholds and the `severity` labels are starting points. Change the `container` selector and the `hostname` grouping to the labels your log collector sets.
 
 ### When the two state rules clear
 
@@ -151,7 +161,9 @@ A child that had run for at least a minute is respawned at once, before the next
 
 These rules read what keepalived reports about itself, and a completed takeover is in that report. The host that stops logs `(NAME) sent 0 priority`. The host that takes over logs `(NAME) Backup received priority 0 advertisement` before `Entering MASTER STATE`. A master that loses an election while alive logs `Master received advert from <peer> with higher priority P, ours Q`, or `... with same priority P but higher IP address than ours`. The two priority-0 lines need `--log-detail`, and the image passes it, so every line above is in `docker logs keepalived` already.
 
-Only a host that dies outright is silent. The host that takes over then logs `Entering MASTER STATE` and nothing else, which every election at boot logs too. A rule for that case has to know which host should hold the virtual IP. That decision is yours, and the rule belongs in your own rule set beside these.
+Only a host that dies outright is silent. The host that takes over then logs `Entering MASTER STATE` and nothing else, which every election at boot logs too. The outside probe in [Knowing the app is alive](#knowing-the-app-is-alive) reports this case only when no peer takes the address over. When a peer takes it over, the probe stays green, because that is the failover working.
+
+keepalived's own email, if you set it up, sends the peer's change to MASTER. To learn that the host itself died, watch the host, for example with a target-down rule on an exporter that runs on it.
 
 ### Matchers and keepalived versions
 
@@ -162,3 +174,51 @@ Nine rules match through a regex rather than a plain substring. `KeepalivedTrack
 The build-time test in `tests/smoke.sh` checks the distinctive strings of every matcher against the shipped keepalived binary. A keepalived update that rewords one fails the build.
 
 The test cannot check the bare status word `failed`. keepalived stores that word apart from the format string it lands in. The binary also carries unrelated strings that contain it, so a search for it could never fail. Re-read that word against the keepalived sources on every keepalived update.
+
+## Knowing the app is alive
+
+The image opens no port and serves no health page, so nothing outside the container can ask keepalived how it is. Docker health, the log rules and an outside probe of the virtual IP each see a different fault.
+
+### Docker health
+
+The image checks itself every 30 seconds with `pgrep`, which passes while keepalived runs a VRRP or LVS checker child, as [How it works](how-it-works.md#healthcheck-and-exit-codes) describes. Docker marks the container unhealthy after 3 failures and allows 15 seconds after a start. Docker's health status notifies nobody on its own, and Docker does not restart an unhealthy container.
+
+### A container that exits
+
+A config keepalived cannot start on stops the container, and the restart policy starts it again in a loop. `KeepalivedPermanentError` and `KeepalivedConfigUnusable` report most of those causes from the log. A missing `keepalived.conf` logs only its start and stop lines, so a restart-loop rule over your container metrics is the signal for it.
+
+### Probing the virtual IP
+
+An outside probe of the virtual IP is the only signal for the address being on no host, including a host that dies outright with no peer left to take the address over. Probe the virtual IP on the port of the service it fronts, from a host that is not a VRRP peer. A peer can hold the address itself, so its probe never leaves the host and passes even when the rest of your network cannot reach the address.
+
+A probe of the service also catches a host that holds the address while the service behind it is broken. Probe every 60 seconds with a 5-second timeout, and alert after 3 failed probes in a row.
+
+For a [blackbox exporter](https://github.com/prometheus/blackbox_exporter) job, this rule fires on the third failed probe, and also when the probe stops reporting. Change `keepalived-vip` to the name of your probe job:
+
+```yaml
+groups:
+  - name: keepalived-virtual-ip
+    rules:
+      - alert: KeepalivedVirtualIPUnreachable
+        expr: probe_success{job="keepalived-vip"} == 0 or absent(probe_success{job="keepalived-vip"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The keepalived virtual IP does not answer"
+          description: "The service behind the virtual IP failed three probes in a row, or the probe stopped reporting. Check which host holds the address and read the state lines in each host's log."
+```
+
+### Who is told
+
+| You run | A container that exits | The address on no host |
+| --- | --- | --- |
+| Loki with these rules | `KeepalivedPermanentError` or `KeepalivedConfigUnusable` | Nobody, so add the outside probe |
+| Prometheus with the probe rule | Nobody while a peer takes the address over, because that is the failover working | `KeepalivedVirtualIPUnreachable` |
+| Docker or Unraid only | The restart policy restarts it in a loop, and something that watches container restarts sees it | Nobody, so add the outside probe |
+
+### keepalived's own email
+
+Consider keepalived's `smtp_alert` if you run no log stack and want an email on each state change. Set `notification_email` and `smtp_server` in `global_defs`, then turn on `smtp_alert` there or in each `vrrp_instance`, as the [keepalived.conf manual](https://github.com/acassen/keepalived/blob/master/doc/man/man5/keepalived.conf.5.in) describes. It sends plain SMTP with no TLS and no login, so point `smtp_server` at a mail relay on your network.
+
+It reports state changes only, an instance entering MASTER, BACKUP or FAULT, stopping, or removed by a reload, with FAULT included unless `no_email_faults` is set in `global_defs`. It does not report a failing track script that leaves the state unchanged, a config error or a script keepalived disabled.

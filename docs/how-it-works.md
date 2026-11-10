@@ -26,4 +26,4 @@ A config keepalived cannot start on reaches neither state, because keepalived is
 | A `keepalived.conf` that is unreadable, not a regular file, or executable | 6 | The configuration error |
 | A config the VRRP child rejects, such as one naming an interface the container does not have | 2 | `exited with permanent error CONFIG` |
 
-The probe does not report a stuck VRRP instance. A child that dies after running for at least a minute is respawned at once and passes the probe. Watch the log and the alert rules for both, as [Monitoring and alerts](monitoring.md) describes.
+The probe does not report a stuck VRRP instance. A child that dies after running for at least a minute is respawned at once and passes the probe. Watch the log and the alert rules for both, as [Monitoring and alerts](monitoring.md) describes. Docker's health status notifies nobody on its own. [Knowing the app is alive](monitoring.md#knowing-the-app-is-alive) lists what does.

@@ -137,6 +137,8 @@ One scan finding is accepted, AVD-DS-0002 "image user should not be root", becau
 
 The healthcheck passes while keepalived has a child process running, either its VRRP process or its LVS checker. Unhealthy means keepalived is up but has nothing to run, such as an empty file or a file with only `global_defs`. It also means a child process keeps dying within a minute of starting. A config keepalived cannot start on stops the container instead, and `docker ps -a` shows the exit code and the restart count. The probe does not see a stuck VRRP instance, so watch `docker logs keepalived`.
 
+An unhealthy container notifies nobody, and a host that dies outright logs nothing. [An outside probe of the virtual IP](docs/monitoring.md#knowing-the-app-is-alive) reports an address that no host holds.
+
 - `Unsafe permissions found for script ... - disabling`. A folder or script is writable by a non-root user. Repeat step 4 of the quick start.
 - `Configuration file '...' is not a regular non-executable file - skipping`, and the container restarts in a loop. Run `sudo chmod 644 keepalived/keepalived.conf`.
 - `Error exec-ing command '...'`. The script could not start. Its first line names a program the image lacks, such as `bash`, or it sits on a `noexec` mount. keepalived counts that check as passed, so the host keeps the address.
@@ -147,13 +149,13 @@ The healthcheck passes while keepalived has a child process running, either its 
 
 ## Monitoring
 
-keepalived writes every VRRP state change, check-script result and config error to `docker logs`. Eleven Loki alert rules ship in [`alerts/logql.yaml`](alerts/logql.yaml). [Monitoring and alerts](docs/monitoring.md) lists them, shows how to load them and how to read the current state of each instance.
+keepalived writes every VRRP state change, check-script result and config error to `docker logs`. Eleven Loki alert rules ship in [`alerts/logql.yaml`](alerts/logql.yaml). keepalived has no metrics page, so the virtual IP itself is watched by an outside probe. [Monitoring and alerts](docs/monitoring.md) lists the rules, the probe and keepalived's own email alerts.
 
 ## Documentation
 
 - [Configuration](docs/configuration.md) covers script permissions, locked memory, realtime scheduling, reloads and IPv6 router advertisements.
 - [How docker-keepalived works](docs/how-it-works.md) covers the design, what the image runs, the healthcheck and the exit codes.
-- [Monitoring and alerts](docs/monitoring.md) lists the alert rules and the state dumps.
+- [Monitoring and alerts](docs/monitoring.md) lists the alert rules, the outside probe of the virtual IP, the state dumps and the metrics options.
 - [Security](docs/hardening.md) covers the privilege model, the read-only profile, the patches and image signatures.
 
 ## Credits

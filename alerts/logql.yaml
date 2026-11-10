@@ -5,9 +5,9 @@
 # selector and the hostname grouping to the labels your log collector sets.
 # Each matcher keys on log wording from the pinned keepalived release, and
 # tests/smoke.sh checks those strings against the shipped binary.
+# keepalived has no metrics page, so this is the image's only rule file.
 # docs/monitoring.md explains each rule and docs/configuration.md the settings
-# they depend on. Nothing checks those pages against this file, so update them
-# with any change to what a rule means or when it fires.
+# they depend on. Update both with any change to what a rule means or when it fires.
 groups:
   - name: keepalived
     rules:

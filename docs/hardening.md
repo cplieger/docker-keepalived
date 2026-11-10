@@ -20,7 +20,7 @@ The container root filesystem is writable by default, and `read_only: true` need
       - /run:size=1m
 ```
 
-`/tmp` is a separate question. The three state dumps write there, as [Monitoring and alerts](monitoring.md#reading-the-current-state) describes. On a read-only root a dump logs that it cannot open its file, such as `Can't open /tmp/keepalived.stats`, and keepalived continues. Add a second tmpfs at `/tmp` only if you use the dumps.
+`/tmp` is a separate question. The three state dumps write there, as [Monitoring and alerts](monitoring.md#reading-the-current-state) describes. On a read-only root a dump logs that it cannot open its file, such as `Can't open /tmp/keepalived.stats`, and keepalived continues. Add a second tmpfs at `/tmp` only if you use the dumps. A metrics exporter in another container reads the dumps too, so it needs `/tmp` as a volume both containers mount, not a private tmpfs.
 
 ## The keepalived patches
 
