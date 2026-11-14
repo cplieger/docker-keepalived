@@ -90,7 +90,7 @@ Realtime scheduling needs the `SYS_NICE` capability. Add it to the service in `c
       - SYS_NICE
 ```
 
-Without `SYS_NICE`, each switch keepalived tries fails with one `child process: cannot raise priority` line, and the process runs at normal priority. VRRP and the checks keep working. `vrrp_rt_priority` and `checker_rt_priority` try the switch at startup and on each reload. `max_auto_priority` tries it at the first late timer after a start or a reload.
+Without `SYS_NICE`, each switch keepalived tries fails with one `child process: cannot raise priority` line, and the process runs at normal priority. VRRP and the checks keep working. If you do not need realtime scheduling, remove `vrrp_rt_priority`, `checker_rt_priority` and `max_auto_priority` from `global_defs` instead. `vrrp_rt_priority` and `checker_rt_priority` try the switch at startup and on each reload. `max_auto_priority` tries it at the first late timer after a start or a reload.
 
 `vrrp_priority` and `checker_priority` set a nice value instead, which is the ordinary priority the scheduler weighs. A positive value lowers the priority and needs no capability. A negative value raises it and needs `SYS_NICE`. Without it keepalived logs `Unable to set process priority to -10 - Permission denied`, with your value in place of -10, and keeps the default.
 

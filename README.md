@@ -16,22 +16,22 @@ docker-keepalived keeps one address reachable while a host, or a service on it, 
 
 ## Who it is for
 
-docker-keepalived is for admins who already write keepalived configurations and want keepalived in a container. It runs a pinned official keepalived release, patched so a check script that cannot start is logged and realtime scheduling works.
+docker-keepalived is for admins who write `keepalived.conf` themselves and want keepalived in a container. It runs a pinned official keepalived release, patched so a script that cannot start is logged and realtime scheduling works.
 
-You need two or more Linux hosts with Docker on one network, on `amd64` or `arm64`. The container runs as root with host networking and the `NET_ADMIN` and `NET_RAW` capabilities.
+You need two or more `amd64` or `arm64` Linux hosts with Docker on one network. The container runs as root with host networking and the `NET_ADMIN` and `NET_RAW` capabilities.
 
-Three other options suit other setups:
+Other options suit other setups:
 
-- Consider your distribution's keepalived package to run it on the host, which its maintainers call the quickest install.
-- Consider [osixia/keepalived](https://github.com/osixia/container-keepalived) if you want the configuration generated from environment variables.
+- Consider your distribution's keepalived package for a host install, which upstream calls the quickest.
+- Consider [osixia/keepalived](https://github.com/osixia/container-keepalived) if you want `keepalived.conf` generated from environment variables.
 - Consider [kube-vip](https://kube-vip.io/) if you want a virtual IP for a Kubernetes control plane or LoadBalancer services.
 
-docker-keepalived is free software under the Apache-2.0 license. keepalived itself is under GPL-2.0-or-later.
+docker-keepalived is free software under the Apache-2.0 license, and keepalived under GPL-2.0-or-later.
 <!-- hub-overview END -->
 
 ## Quick start
 
-The image is on GitHub Container Registry and Docker Hub, for `amd64` and `arm64`. This is the [`compose.yaml`](compose.yaml) in this repository. Besides `latest`, each release is [tagged](https://github.com/cplieger/docs/blob/main/docs/images.md#which-tag-to-use) with its full, minor and major version, such as `v2.4.0`, `v2.4` and `v2`, so every host can run the same release. These are the image's own version numbers, separate from the keepalived version inside it.
+The image is on GitHub Container Registry and Docker Hub, for `amd64` and `arm64`. This is the [`compose.yaml`](compose.yaml) in this repository. Besides `latest`, each release is [tagged](https://github.com/cplieger/docs/blob/main/docs/images.md#which-tag-to-use) with its full, minor and major version, such as `v2.4.0`, `v2.4` and `v2`, so every host can run the same release. These tags number the image, not keepalived. Each image's [software bill of materials](https://github.com/cplieger/docs/blob/main/docs/images.md#reading-the-software-bill-of-materials) names the keepalived version it contains.
 
 ```yaml
 services:
@@ -113,7 +113,7 @@ Run `docker logs keepalived`. You should see `Starting VRRP child process`. If y
 
 ## Configuration reference
 
-Every setting lives in `keepalived.conf`. The image reads no environment variables. keepalived reads the file at start, and again when you run `docker kill -s HUP keepalived`. A reload keeps the state of unchanged instances, and changed ones renegotiate briefly. Seven settings need a full restart instead, listed in [Configuration](docs/configuration.md#reloading-without-a-restart). If multicast does not pass between your hosts, list them with `unicast_peer`, as [Configuration](docs/configuration.md#multicast-and-unicast) shows.
+Every setting lives in `keepalived.conf`. The image reads no environment variables. keepalived reads the file at start, and again when you run `docker kill -s HUP keepalived`. A reload keeps the state of unchanged instances, and changed ones renegotiate briefly. Seven settings, listed in [Configuration](docs/configuration.md#reloading-without-a-restart), take effect only after a full restart. If multicast does not pass between your hosts, list them with `unicast_peer`, as [Configuration](docs/configuration.md#multicast-and-unicast) shows.
 
 | Mount | Description |
 | --- | --- |
@@ -125,25 +125,24 @@ Every setting lives in `keepalived.conf`. The image reads no environment variabl
 | `NET_RAW` | Building VRRP packets on raw sockets, and ICMP probes |
 | `SYS_NICE` | Optional. Only for realtime scheduling, which `vrrp_rt_priority`, `checker_rt_priority` and `max_auto_priority` ask for, or a negative `vrrp_priority` or `checker_priority` |
 
-The container uses `network_mode: host`, because VRRP adverts are multicast on your LAN segment and a container network would isolate them. If your `keepalived.conf` sets `vrrp_no_swap` or `checker_no_swap`, raise the container's locked-memory limit as [Configuration](docs/configuration.md#locked-memory-for-vrrp_no_swap) shows, or the option does nothing. If it asks for realtime scheduling, add `SYS_NICE` as [Configuration](docs/configuration.md#realtime-scheduling) shows. Without it keepalived logs a warning and runs at normal priority.
+The container uses `network_mode: host`, because VRRP adverts are multicast on your LAN segment and a container network would isolate them. If your `keepalived.conf` sets `vrrp_no_swap` or `checker_no_swap`, raise the container's locked-memory limit as [Configuration](docs/configuration.md#locked-memory-for-vrrp_no_swap) shows, or the option does nothing. If it asks for realtime scheduling, add `SYS_NICE` as [Configuration](docs/configuration.md#realtime-scheduling) shows. Without it keepalived logs `child process: cannot raise priority` and runs at normal priority.
 
 ## Security
 
-The container runs as root by design. keepalived needs `NET_ADMIN` to add and remove the virtual IP on a host interface and `NET_RAW` to build VRRP packets. Grant those two with `cap_add` rather than `privileged`. Mount `/etc/keepalived` read-only. It is the only bind mount the image needs, and a writable one would let the container change the scripts keepalived runs as root. Set `enable_script_security` so keepalived refuses any script a non-root user could change. `auth_pass` travels in clear text, so VRRP authentication guards against a misconfigured peer, not an attacker.
+The container runs as root by design. keepalived needs `NET_ADMIN` to add and remove the virtual IP on the host and `NET_RAW` to build VRRP packets. Grant those two with `cap_add` rather than `privileged`. Mount `/etc/keepalived` read-only. It is the only bind mount the image needs, and a writable one would let the container change the scripts keepalived runs as root. Set `enable_script_security` so keepalived refuses any script a non-root user could change. `auth_pass` travels in clear text, so VRRP authentication guards against a misconfigured peer, not an attacker.
 
-One scan finding is accepted, AVD-DS-0002 "image user should not be root", because a non-root user cannot manage the virtual IP. Two patches fix keepalived's report of a script it could not execute, its realtime scheduling and its handling of a signal that kills a script. [Security](docs/hardening.md) covers the patches, the read-only profile, signature checks and what the image contains.
+One scan finding is accepted, AVD-DS-0002 "image user should not be root", because a non-root user cannot manage the virtual IP. One patch logs a script keepalived could not execute. The other makes realtime scheduling work, and stops a signal that kills a script from reaching keepalived's processes. [Security](docs/hardening.md) covers the patches, the read-only profile, signatures and the image contents.
 
 ## Troubleshooting
 
-The healthcheck passes while keepalived has a child process running, either its VRRP process or its LVS checker. Unhealthy means keepalived is up but has nothing to run, such as an empty file or a file with only `global_defs`. It also means a child process keeps dying within a minute of starting. A config keepalived cannot start on stops the container instead, and `docker ps -a` shows the exit code and the restart count. The probe does not see a stuck VRRP instance, so watch `docker logs keepalived`.
+The healthcheck passes while keepalived runs a child process, its VRRP process or its LVS checker. It turns unhealthy when keepalived has nothing to run, such as an empty `keepalived.conf` or one with only `global_defs`. It also turns unhealthy when a child keeps dying within a minute of starting. When keepalived cannot start on your config, the container exits, and `docker ps -a` shows its exit code and restart count. The healthcheck does not see a stuck VRRP instance, so watch `docker logs keepalived`.
 
-An unhealthy container notifies nobody, and a host that dies outright logs nothing. [An outside probe of the virtual IP](docs/monitoring.md#knowing-the-app-is-alive) reports an address that no host holds.
+An unhealthy container notifies nobody, and a host that dies outright logs nothing. [An outside probe of the virtual IP](docs/monitoring.md#knowing-the-app-is-alive) alerts you when no host holds the address.
 
 - `Unsafe permissions found for script ... - disabling`. A folder or script is writable by a non-root user. Repeat step 4 of the quick start.
 - `Configuration file '...' is not a regular non-executable file - skipping`, and the container restarts in a loop. Run `sudo chmod 644 keepalived/keepalived.conf`.
-- `Error exec-ing command '...'`. The script could not start. Its first line names a program the image lacks, such as `bash`, or it sits on a `noexec` mount. keepalived counts that check as passed, so the host keeps the address.
+- `Error exec-ing command '...'`. The script's first line names a program the image lacks, such as `bash`, or the script sits on a `noexec` mount. A track script that cannot start counts as passed, so the host keeps the virtual IP while your service is down.
 - `Unable to lock process in memory`, or `Resource temporarily unavailable` and a respawned child. `vrrp_no_swap` needs a higher locked-memory limit.
-- `child process: cannot raise priority`. Your config asks for realtime scheduling and the container lacks `SYS_NICE`. keepalived carries on at normal priority. Add the capability, or remove the realtime keywords.
 
 [Configuration](docs/configuration.md) and [How it works](docs/how-it-works.md#healthcheck-and-exit-codes) have the detail.
 
